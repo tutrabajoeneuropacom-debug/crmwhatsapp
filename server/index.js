@@ -371,8 +371,6 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-const careerCoach = require('./services/careerCoach');
-
 app.post('/api/analyze-cv', upload.single('cv'), async (req, res) => {
   const cvFile = req.file;
   const { jobDescription, cvText: bufCvText } = req.body; // accept text input
@@ -409,7 +407,24 @@ app.post('/api/analyze-cv', upload.single('cv'), async (req, res) => {
       }
     }
 
-    const analysis = await careerCoach.analyzeCV(finalCvText, jobDescription, userTier);
+    // AI Analysis (MOCKED FOR WHATSAPP PIVOT)
+    // const analysis = await careerCoach.analyzeCV(finalCvText, jobDescription);
+    const analysis = { score: 0, feedback: "Modulo ATS desactivado en version WhatsApp." };
+
+    if (cvFile) cleanup(cvFile.path);
+
+    // Save mock usage
+    /*
+    if (userId && supabaseAdmin) {
+       await supabaseAdmin.from('cv_analyses').insert({
+         user_id: userId,
+         cv_text: finalCvText.substring(0, 500),
+         job_description: jobDescription.substring(0, 500),
+         analysis_json: analysis,
+         engine_used: 'gpt-4o'
+       });
+    }
+    */
 
     // 3. Save to Supabase (if userId provided)
     if (userId && supabaseAdmin) {
