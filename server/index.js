@@ -371,9 +371,6 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-const { processTranslation } = require('./services/translator');
-
-const { extractTextFromPDF } = require('./services/pdfService');
 const careerCoach = require('./services/careerCoach');
 
 app.post('/api/analyze-cv', upload.single('cv'), async (req, res) => {
