@@ -1,14 +1,13 @@
 import axios from 'axios';
 
 const getBaseUrl = () => {
-    // FORCE HARDCODED URL FOR PRODUCTION TO AVOID ENV VAR ISSUES
+    // Correct Backend URL for WhatsApp CRM
     if (import.meta.env.PROD) {
-        // Fallback actualizado al servidor real confirmado por el usuario
-        return import.meta.env.VITE_API_URL || 'https://ats-backend-l95k.onrender.com/api';
+        return import.meta.env.VITE_API_URL || 'https://crmwhatsapp-xari.onrender.com';
     }
 
     // Localhost fallback
-    return 'http://localhost:3000/api';
+    return 'http://localhost:3000';
 };
 
 const api = axios.create({

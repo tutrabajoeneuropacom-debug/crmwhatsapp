@@ -71,10 +71,16 @@ function App() {
 
   const checkProfile = async (userId) => {
     try {
-      const response = await api.get(`/profile/${userId}`);
-      if (response.data) {
-        const profile = response.data;
-        setOnboardingComplete(!!profile.onboarding_completed);
+      // Direct Supabase query (Faster & More Reliable)
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (profile) {
+        // If they have a subscription, consider onboarding complete
+        setOnboardingComplete(!!profile.subscription_tier);
       } else {
         setOnboardingComplete(false);
       }
