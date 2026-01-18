@@ -90,6 +90,16 @@ const handlePairing = (req, res) => {
 app.post('/api/whatsapp/pair', handlePairing);
 app.get('/api/whatsapp/pair', handlePairing);
 
+// Wipe Session Endpoint (Critical for fixing 405 loops)
+app.use('/api/whatsapp/wipe', async (req, res) => {
+  const success = await whatsappService.clearSession();
+  if (success) {
+    res.json({ success: true, message: '✅ Session wiped. Please pairing again.' });
+  } else {
+    res.status(500).json({ success: false, message: '❌ Failed to wipe session.' });
+  }
+});
+
 app.post('/api/whatsapp/restart', (req, res) => {
   whatsappService.initializeClient();
   res.json({ message: 'Restarting WhatsApp Client...' });

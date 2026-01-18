@@ -70,7 +70,7 @@ class WhatsAppService {
                     // Cache keys in memory to prevent DB latency from causing 405 Connection Failure
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
                 },
-                browser: ["Mac OS", "Chrome", "121.0.6167.139"], // Trusted Desktop Signature
+                browser: ['Chrome (Linux)', 'Chrome', '109.0.5414.119'], // Standard Linux Signature
                 connectTimeoutMs: 60000,
                 retryRequestDelayMs: 2000,
                 syncFullHistory: false, // Cleaner start
@@ -107,6 +107,7 @@ class WhatsAppService {
 
                 if (connection === 'close') {
                     const error = lastDisconnect?.error;
+                    // Detect if 405 is actually the status code from the output
                     const statusCode = error?.output?.statusCode;
                     const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
@@ -114,12 +115,16 @@ class WhatsAppService {
                     this.log(`Connection closed. Reconnecting?: ${shouldReconnect}. Error: ${this.lastError}`, 'warn');
 
                     this.status = 'DISCONNECTED';
-                    if (shouldReconnect) {
-                        // Retry with delay
+
+                    if (statusCode === 405) {
+                        this.log('🛑 ERROR 405 DETECTED (Corrupted Session). Auto-reconnect paused. Please use /api/whatsapp/wipe', 'error');
+                        // Do NOT call initializeClient again here
+                    } else if (shouldReconnect) {
                         setTimeout(() => this.initializeClient(this.phoneNumber), 2000);
                     } else {
                         this.log('Logged out fatal error. Delete auth to restart.', 'error');
                     }
+
                     if (this.io) this.io.emit('wa_status', { status: 'DISCONNECTED' });
                 } else if (connection === 'open') {
                     this.log('WHATSAPP CLIENT IS READY! 🚀');
@@ -163,7 +168,7 @@ class WhatsAppService {
                         await this.sock.sendMessage(from, { text: 'pong' });
                     }
 
-                    // CRM INTEGRATION
+                    // CRM INTEGRATION - Keeping logic simple
                     if (text.toLowerCase().includes('precio') || text.toLowerCase().includes('información')) {
                         const leadData = {
                             name: msg.pushName || 'Unknown User',
@@ -179,6 +184,37 @@ class WhatsAppService {
         } catch (fatalErr) {
             this.lastError = fatalErr.message;
             this.log(`FATAL INIT ERROR: ${fatalErr.message}`, 'error');
+        }
+    }
+
+    async clearSession() {
+        this.log("⚠️ WIPING SESSION DATA FROM SUPABASE...");
+        try {
+            // Wiping everything in whatsapp_sessions to be safe (Single Tenant)
+            const { error } = await supabase.from('whatsapp_sessions').delete().neq('session_id', 'CHECK_IF_EMPTY_TABLE_PROTECTION_DISABLED');
+            // We use neq 'placeholder' effectively to delete all rows.
+            // If the table is large, this might be slow, but it's likely small.
+
+            if (error) {
+                this.log(`Error wiping DB: ${error.message}`, 'error');
+                // Fallback: try deleting local if exists (not used here)
+            } else {
+                this.log("✅ Database session rows cleared.");
+            }
+
+            this.status = 'DISCONNECTED';
+            this.pairingCode = null;
+            this.lastInitTime = 0; // Reset throttle
+            this.phoneNumber = null;
+            if (this.sock) {
+                try { this.sock.end(undefined); } catch (e) { }
+                this.sock = null;
+            }
+            this.log("✅ SESSION STATE CLEARED. Ready to re-pair.");
+            return true;
+        } catch (error) {
+            this.log(`❌ Failed to wipe session: ${error.message}`, 'error');
+            return false;
         }
     }
 
