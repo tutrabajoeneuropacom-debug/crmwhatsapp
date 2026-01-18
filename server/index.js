@@ -55,8 +55,8 @@ app.get('/api/whatsapp/status', (req, res) => {
 });
 
 const handlePairing = (req, res) => {
-  // Support body (POST) or query param (GET)
-  const phoneNumber = req.body.phoneNumber || req.query.phoneNumber;
+  // Safely check body first (POST), then query (GET)
+  const phoneNumber = (req.body && req.body.phoneNumber) || req.query.phoneNumber;
 
   if (!phoneNumber) {
     return res.status(400).json({
