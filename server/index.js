@@ -28,6 +28,9 @@ const cleanup = (filePath) => {
 
 const http = require('http');
 const { Server } = require('socket.io');
+
+console.log("🚀 Starting MVP Idiomas Server...");
+
 // --- CONFIGURATION & SERVER SETUP ---
 const app = express();
 const server = http.createServer(app);
@@ -37,6 +40,8 @@ const io = new Server(server, {
     methods: ["GET", "POST"]
   }
 });
+
+const PORT = process.env.PORT || 3000;
 
 // --- WHATSAPP CLOUD API SERVICE ---
 const whatsappCloud = require('./services/whatsappCloudClient');
