@@ -3,7 +3,7 @@ if (!global.crypto) {
     global.crypto = require('crypto');
 }
 
-const { makeWASocket, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, DisconnectReason, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const useSupabaseAuthState = require('./supabaseAuthState');
 const { createClient } = require('@supabase/supabase-js');
@@ -65,10 +65,15 @@ class WhatsAppService {
             this.sock = makeWASocket({
                 logger: pino({ level: 'silent' }),
                 printQRInTerminal: false,
-                auth: state,
-                browser: ["Ubuntu", "Chrome", "20.0.04"], // Camouflage as Linux Desktop
+                auth: {
+                    creds: state.creds,
+                    // Cache keys in memory to prevent DB latency from causing 405 Connection Failure
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+                },
+                browser: ["Mac OS", "Chrome", "121.0.6167.139"], // Trusted Desktop Signature
                 connectTimeoutMs: 60000,
                 retryRequestDelayMs: 2000,
+                syncFullHistory: false, // Cleaner start
             });
 
             // Pairing Code Logic
