@@ -28,46 +28,41 @@ const cleanup = (filePath) => {
 
 const http = require('http');
 const { Server } = require('socket.io');
-const whatsappClient = require('./services/whatsappClient');
+// --- WHATSAPP CLOUD API ENDPOINTS ---
+const whatsappCloud = require('./services/whatsappCloudClient');
+whatsappCloud.setSocket(io);
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+// 1. Webhook Verification (Required by Meta)
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  // Check if mode and token sent is correct
+  const MY_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'my_secret_verify_token';
+
+  if (mode && token) {
+    if (mode === 'subscribe' && token === MY_VERIFY_TOKEN) {
+      console.log('✅ WEBHOOK_VERIFIED');
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400); // Bad Request
   }
 });
 
-// Pass socket to WhatsApp Service
-whatsappClient.setSocket(io);
-
-const PORT = process.env.PORT || 3000;
-
-const corsOptions = {
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-};
-
-app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
+// 2. Receive Messages (POST)
+app.post('/webhook', async (req, res) => {
+  await whatsappCloud.processWebhook(req.body);
+  res.sendStatus(200);
 });
 
-// --- WHATSAPP API ENDPOINTS ---
 app.get('/api/whatsapp/status', (req, res) => {
-  res.json(whatsappClient.getStatus());
-});
-
-app.post('/api/whatsapp/restart', (req, res) => {
-  whatsappClient.initializeClient();
-  res.json({ message: 'Restarting Client...' });
+  // Cloud API doesn't have "connection status" like sockets
+  // We return READY to keep frontend happy
+  res.json({ status: 'READY', qr: null, mode: 'CLOUD_API' });
 });
 
 app.get('/', (req, res) => {
