@@ -7,6 +7,7 @@ const { makeWASocket, DisconnectReason, makeCacheableSignalKeyStore } = require(
 const pino = require('pino');
 const useSupabaseAuthState = require('./supabaseAuthState');
 const { createClient } = require('@supabase/supabase-js');
+const { HttpsProxyAgent } = require('https-proxy-agent'); // Proxy support
 
 // Initialize internal Supabase Admin for Session Storage
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -23,30 +24,29 @@ class WhatsAppService {
         this.io = null;
         this.logs = []; // In-memory logs
         this.lastError = null;
-        // Don't init immediately, wait for setSocket or pair request
+        this.lastInitTime = 0;
     }
 
     log(msg, type = 'info') {
         const timestamp = new Date().toISOString();
         const logEntry = `[${timestamp}] [${type}] ${msg}`;
         console.log(logEntry);
-        this.logs.unshift(logEntry); // Add to beginning
-        if (this.logs.length > 50) this.logs.pop(); // Keep last 50
+        this.logs.unshift(logEntry);
+        if (this.logs.length > 50) this.logs.pop();
     }
 
     setSocket(io) {
         this.io = io;
-        // Try auto-init if we have a phone number in env, otherwise wait
         const envPhone = process.env.WHATSAPP_PHONE;
         if (envPhone) {
             this.initializeClient(envPhone);
         } else {
-            this.initializeClient(); // Default init (might wait for QR if no session)
+            this.initializeClient();
         }
     }
 
     async initializeClient(phoneNumber) {
-        // 1. Throttle Reconnections (Prevent Loops)
+        // 1. Throttle Reconnections
         const now = Date.now();
         if (this.lastInitTime && (now - this.lastInitTime) < 5000) {
             this.log('⚠️ Throttling: Connection attempt too fast. Ignoring.', 'warn');
@@ -62,18 +62,36 @@ class WhatsAppService {
             // Auth management via Supabase
             const { state, saveCreds } = await useSupabaseAuthState(supabase);
 
+            // Proxy Configuration (Definitive Solution for 405)
+            const proxyUrl = process.env.PROXY_URL;
+            let agent = undefined;
+            if (proxyUrl) {
+                this.log(`🌐 Using Proxy: ${proxyUrl.replace(/:[^:]*@/, ':***@')}`);
+                agent = new HttpsProxyAgent(proxyUrl);
+            }
+
+            // CONSENSUS CONFIGURATION
             this.sock = makeWASocket({
                 logger: pino({ level: 'silent' }),
                 printQRInTerminal: false,
+                mobile: false,
                 auth: {
                     creds: state.creds,
-                    // Cache keys in memory to prevent DB latency from causing 405 Connection Failure
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
                 },
-                browser: ['Chrome (Linux)', 'Chrome', '109.0.5414.119'], // Standard Linux Signature
+                // 1. Generic Linux to avoid version fingerprinting
+                browser: ['Chrome (Linux)', '', ''],
+                // 2. Critical for Serverless
+                syncFullHistory: false,
+                // 3. Ninja Mode
+                markOnlineOnConnect: false,
+                // 4. Stability Settings
                 connectTimeoutMs: 60000,
-                retryRequestDelayMs: 2000,
-                syncFullHistory: false, // Cleaner start
+                defaultQueryTimeoutMs: 60000,
+                retryRequestDelayMs: 5000,
+                keepAliveIntervalMs: 30000,
+                // 5. Proxy Agent
+                agent: agent
             });
 
             // Pairing Code Logic
