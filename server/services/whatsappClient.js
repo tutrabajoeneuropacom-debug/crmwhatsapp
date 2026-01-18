@@ -10,9 +10,9 @@ const { createClient } = require('@supabase/supabase-js');
 const { HttpsProxyAgent } = require('https-proxy-agent'); // Proxy support
 
 // Initialize internal Supabase Admin for Session Storage
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+// const supabaseUrl = process.env.SUPABASE_URL;
+// const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// const supabase = createClient(supabaseUrl, supabaseKey);
 
 class WhatsAppService {
     constructor() {
@@ -64,7 +64,7 @@ class WhatsAppService {
             const { state, saveCreds } = await useMultiFileAuthState("auth_info_baileys");
 
             // Proxy Configuration (Definitive Solution for 405)
-            const proxyUrl = process.env.PROXY_URL;
+            const proxyUrl = undefined; // FORCE NO PROXY FOR LOCAL TEST
             let wsAgent = undefined;
             let httpAgent = undefined;
 
@@ -83,20 +83,20 @@ class WhatsAppService {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
                 },
-                // 1. MacOS Signature (Common Desktop User)
-                browser: ['Mac OS', 'Chrome', '10.15.7'],
+                // SWITCHING SIGNATURE TO UBUNTU (Standard Baileys)
+                browser: ['Ubuntu', 'Chrome', '20.0.04'],
                 // 2. Critical for Serverless
                 syncFullHistory: false,
-                // 3. Standard Mode (Ninja off)
-                markOnlineOnConnect: true,
+                // 3. Ninja Mode
+                markOnlineOnConnect: false,
                 // 4. Stability Settings
-                connectTimeoutMs: 60000,
-                defaultQueryTimeoutMs: 60000,
-                retryRequestDelayMs: 5000,
-                keepAliveIntervalMs: 30000,
+                connectTimeoutMs: 20000,
+                defaultQueryTimeoutMs: 20000,
+                retryRequestDelayMs: 2000,
+                keepAliveIntervalMs: 10000,
                 // 5. Proxy Agents (Separated)
-                agent: wsAgent,
-                fetchAgent: httpAgent
+                // agent: wsAgent, // DISABLED FOR LOCAL
+                // fetchAgent: httpAgent // DISABLED FOR LOCAL
             });
 
             // Pairing Code Logic
@@ -189,6 +189,7 @@ class WhatsAppService {
                     // Ping-Pong Test
                     if (text === '!ping') {
                         await this.sock.sendMessage(from, { text: 'pong' });
+                        continue;
                     }
 
                     // CRM INTEGRATION - Keeping logic simple
@@ -201,6 +202,39 @@ class WhatsAppService {
                         };
                         await this.sendToCRM(leadData);
                     }
+
+                    // AI AUTO-RESPONSE (All Messages)
+                    try {
+                        const aiRouter = require('./aiRouter');
+
+                        const systemPrompt = `Eres un asistente virtual de Career Mastery Engine, una plataforma de preparación para entrevistas laborales y optimización de CVs.
+
+Tu rol es:
+- Ayudar a usuarios con información sobre visas de trabajo
+- Responder preguntas sobre preparación de entrevistas
+- Explicar cómo mejorar CVs para sistemas ATS
+- Ser amigable, profesional y conciso (máximo 2-3 líneas por respuesta)
+
+Si te preguntan por precios o planes, menciona que tenemos planes freemium y premium.`;
+
+                        const response = await aiRouter.chat(
+                            [{ role: 'user', content: text }],
+                            { llm: 'gpt-4o' },
+                            systemPrompt
+                        );
+
+                        const replyText = response.text || "Lo siento, no pude procesar tu mensaje.";
+
+                        await this.sock.sendMessage(from, { text: replyText });
+                        this.log(`REPLIED to ${from}: ${replyText.substring(0, 30)}...`);
+
+                    } catch (aiError) {
+                        this.log(`AI Response Error: ${aiError.message}`, 'error');
+                        // Fallback response
+                        await this.sock.sendMessage(from, {
+                            text: "Gracias por tu mensaje. Un asesor te responderá pronto."
+                        });
+                    }
                 }
             });
 
@@ -211,28 +245,38 @@ class WhatsAppService {
     }
 
     async clearSession() {
-        this.log("⚠️ WIPING SESSION DATA FROM SUPABASE...");
-        try {
-            // Wiping everything in whatsapp_sessions to be safe (Single Tenant)
-            const { error } = await supabase.from('whatsapp_sessions').delete().neq('session_id', 'CHECK_IF_EMPTY_TABLE_PROTECTION_DISABLED');
-            // We use neq 'placeholder' effectively to delete all rows.
-            // If the table is large, this might be slow, but it's likely small.
+        this.log("⚠️ WIPING SESSION DATA...");
 
-            if (error) {
-                this.log(`Error wiping DB: ${error.message}`, 'error');
-                // Fallback: try deleting local if exists (not used here)
+        try {
+            // 1. Wipe Local Files (Priority for MultiFileAuthState)
+            const fs = require('fs');
+            const path = require('path');
+            const authPath = path.resolve('auth_info_baileys');
+
+            if (fs.existsSync(authPath)) {
+                fs.rmSync(authPath, { recursive: true, force: true });
+                this.log("✅ Local auth folder deleted.");
             } else {
-                this.log("✅ Database session rows cleared.");
+                this.log("ℹ️ Local auth folder not found (Clean).");
             }
+
+            // 2. Wipe DB (Optional fallback if we switch back)
+            // const { error } = await supabase.from('whatsapp_sessions').delete().neq('session_id', 'CHECK');
 
             this.status = 'DISCONNECTED';
             this.pairingCode = null;
             this.lastInitTime = 0; // Reset throttle
             this.phoneNumber = null;
+
             if (this.sock) {
-                try { this.sock.end(undefined); } catch (e) { }
+                try {
+                    this.sock.end(undefined);
+                } catch (e) {
+                    console.error("Error closing socket during wipe:", e);
+                }
                 this.sock = null;
             }
+
             this.log("✅ SESSION STATE CLEARED. Ready to re-pair.");
             return true;
         } catch (error) {
