@@ -1,3 +1,8 @@
+// Polyfill for global crypto (Required for Baileys on some Node envs)
+if (!global.crypto) {
+    global.crypto = require('crypto');
+}
+
 const { makeWASocket, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const useSupabaseAuthState = require('./supabaseAuthState');
