@@ -1,31 +1,14 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode');
+const pino = require('pino');
+const fs = require('fs');
 
 class WhatsAppService {
     constructor() {
-        this.client = new Client({
-            authStrategy: new LocalAuth({ dataPath: './whatsapp_auth' }),
-            puppeteer: {
-                headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--single-process',
-                    '--disable-gpu',
-                    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-                ],
-                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable'
-            }
-        });
-
+        this.sock = null;
+        this.status = 'DISCONNECTED';
         this.qrCodeUrl = null;
-        this.status = 'DISCONNECTED'; // DISCONNECTED, QR_READY, READY
-        this.io = null; // Socket.io instance
-
+        this.io = null;
         this.initializeClient();
     }
 
@@ -33,59 +16,99 @@ class WhatsAppService {
         this.io = io;
     }
 
-    initializeClient() {
-        console.log("Initializing WhatsApp Client...");
+    async initializeClient() {
+        console.log("Initializing WhatsApp Client (Baileys)...");
 
-        this.client.on('qr', async (qr) => {
-            console.log('QR RECEIVED', qr);
-            this.qrCodeUrl = qr; // Raw QR string for frontend to render
-            this.status = 'QR_READY';
-            if (this.io) this.io.emit('wa_qr', { qr });
+        // Auth management
+        const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
+
+        this.sock = makeWASocket({
+            logger: pino({ level: 'silent' }),
+            printQRInTerminal: false, // We send it to frontend
+            auth: state,
+            browser: ["WhatsApp SaaS", "Chrome", "1.0.0"], // Custom Browser Name
+            connectTimeoutMs: 60000,
         });
 
-        this.client.on('ready', () => {
-            console.log('WHATSAPP CLIENT IS READY!');
-            this.status = 'READY';
-            this.qrCodeUrl = null;
-            if (this.io) this.io.emit('wa_status', { status: 'READY' });
-        });
+        // Connection Update Handler
+        this.sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
 
-        this.client.on('message', async msg => {
-            console.log('MESSAGE RECEIVED:', msg.body);
-            if (msg.body === '!ping') {
-                msg.reply('pong');
+            if (qr) {
+                console.log('QR RECEIVED');
+                this.qrCodeUrl = qr; // Baileys gives raw string
+                this.status = 'QR_READY';
+                if (this.io) this.io.emit('wa_qr', { qr });
             }
-            // Emit to frontend logger
-            if (this.io) this.io.emit('wa_log', {
-                from: msg.from,
-                body: msg.body,
-                timestamp: new Date()
-            });
 
-            // CRM INTEGRATION HOOK (Bitrix24 / Zapier)
-            if (msg.body.toLowerCase().includes('precio') || msg.body.toLowerCase().includes('información')) {
-                const leadData = {
-                    name: msg._data?.notifyName || 'Unknown User',
-                    phone: msg.from.replace('@c.us', ''),
-                    query: msg.body,
-                    source: 'WhatsApp SaaS'
-                };
-                await this.sendToCRM(leadData);
+            if (connection === 'close') {
+                const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+                console.log('Connection closed. Reconnecting?: ', shouldReconnect);
+                this.status = 'DISCONNECTED';
+                if (shouldReconnect) {
+                    this.initializeClient();
+                } else {
+                    console.log('Logged out. Delete auth folder to restart.');
+                }
+                if (this.io) this.io.emit('wa_status', { status: 'DISCONNECTED' });
+            } else if (connection === 'open') {
+                console.log('WHATSAPP CLIENT IS READY!');
+                this.status = 'READY';
+                this.qrCodeUrl = null;
+                if (this.io) this.io.emit('wa_status', { status: 'READY' });
             }
         });
 
-        this.client.on('authenticated', () => {
-            console.log('AUTHENTICATED');
-        });
+        // Creds Update Handler
+        this.sock.ev.on('creds.update', saveCreds);
 
-        this.client.initialize();
+        // Message Handler
+        this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+            if (type !== 'notify') return;
+
+            for (const msg of messages) {
+                if (!msg.message) continue;
+
+                // Extract Body
+                const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+                if (!text) continue;
+
+                // Sender
+                const from = msg.key.remoteJid;
+                const isMe = msg.key.fromMe;
+                console.log('MESSAGE RECEIVED:', text, 'FROM:', from);
+
+                if (this.io) this.io.emit('wa_log', {
+                    from: from.replace('@s.whatsapp.net', ''),
+                    body: text,
+                    timestamp: new Date()
+                });
+
+                if (isMe) continue; // Don't reply to self
+
+                // Ping-Pong Test
+                if (text === '!ping') {
+                    await this.sock.sendMessage(from, { text: 'pong' });
+                }
+
+                // CRM INTEGRATION
+                if (text.toLowerCase().includes('precio') || text.toLowerCase().includes('información')) {
+                    const leadData = {
+                        name: msg.pushName || 'Unknown User',
+                        phone: from.replace('@s.whatsapp.net', ''),
+                        query: text,
+                        source: 'WhatsApp SaaS'
+                    };
+                    await this.sendToCRM(leadData);
+                }
+            }
+        });
     }
 
     async sendToCRM(leadData) {
-        // Check if Webhook URL is configured
         const CRM_WEBHOOK_URL = process.env.CRM_WEBHOOK_URL;
         if (!CRM_WEBHOOK_URL) {
-            console.log("⚠️ CRM Webhook not configured. Skipping sync.", leadData);
+            console.log("⚠️ CRM Webhook not configured.");
             return;
         }
 
@@ -93,8 +116,6 @@ class WhatsAppService {
             const axios = require('axios');
             console.log(`🚀 Sending Lead to CRM: ${leadData.name}`);
 
-            // Bitrix24 Inbound Webhook Format (Example)
-            // https://your-domain.bitrix24.com/rest/1/webhook_token/crm.lead.add.json
             await axios.post(CRM_WEBHOOK_URL, {
                 fields: {
                     TITLE: `Lead WhatsApp: ${leadData.name}`,
