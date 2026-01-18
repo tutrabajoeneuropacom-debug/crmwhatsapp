@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+// CRITICAL POLYFILLS - MUST BE AT THE VERY TOP
+// -----------------------------------------------------------
+const crypto = require('crypto');
+if (!global.crypto) {
+  global.crypto = crypto;
+}
+if (!global.performance) {
+  global.performance = {
+    now: () => Date.now()
+  };
+}
+// -----------------------------------------------------------
+
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
