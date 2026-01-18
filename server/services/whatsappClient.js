@@ -16,7 +16,17 @@ class WhatsAppService {
         this.pairingCode = null;
         this.phoneNumber = null;
         this.io = null;
+        this.logs = []; // In-memory logs
+        this.lastError = null;
         // Don't init immediately, wait for setSocket or pair request
+    }
+
+    log(msg, type = 'info') {
+        const timestamp = new Date().toISOString();
+        const logEntry = `[${timestamp}] [${type}] ${msg}`;
+        console.log(logEntry);
+        this.logs.unshift(logEntry); // Add to beginning
+        if (this.logs.length > 50) this.logs.pop(); // Keep last 50
     }
 
     setSocket(io) {
@@ -31,123 +41,138 @@ class WhatsAppService {
     }
 
     async initializeClient(phoneNumber) {
-        console.log("Initializing WhatsApp Client (Baileys + Supabase Persistence)...");
+        this.log("Initializing WhatsApp Client (Baileys + Supabase Persistence)...");
+        this.lastError = null;
         if (phoneNumber) this.phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
 
-        // Auth management via Supabase
-        const { state, saveCreds } = await useSupabaseAuthState(supabase);
+        try {
+            // Auth management via Supabase
+            const { state, saveCreds } = await useSupabaseAuthState(supabase);
 
-        this.sock = makeWASocket({
-            logger: pino({ level: 'silent' }),
-            printQRInTerminal: false,
-            auth: state,
-            browser: ["TalkMe AI", "Chrome", "1.0.0"],
-            connectTimeoutMs: 60000,
-        });
+            this.sock = makeWASocket({
+                logger: pino({ level: 'silent' }),
+                printQRInTerminal: false,
+                auth: state,
+                browser: ["TalkMe AI", "Chrome", "1.0.0"],
+                connectTimeoutMs: 60000,
+            });
 
-        // Pairing Code Logic
-        if (!state.creds.registered && this.phoneNumber) {
-            console.log(`📱 Requesting Pairing Code for ${this.phoneNumber}...`);
-            setTimeout(async () => {
-                try {
-                    this.pairingCode = await this.sock.requestPairingCode(this.phoneNumber);
-                    console.log(`✅ PAIRING CODE: ${this.pairingCode}`);
-                    this.status = 'PAIRING_READY';
-                    if (this.io) this.io.emit('wa_pairing_code', { code: this.pairingCode });
-                } catch (err) {
-                    console.error('❌ Failed to request pairing code:', err);
+            // Pairing Code Logic
+            if (!state.creds.registered && this.phoneNumber) {
+                this.log(`📱 Requesting Pairing Code for ${this.phoneNumber}...`);
+                setTimeout(async () => {
+                    try {
+                        this.pairingCode = await this.sock.requestPairingCode(this.phoneNumber);
+                        this.log(`✅ PAIRING CODE GENERATED: ${this.pairingCode}`);
+                        this.status = 'PAIRING_READY';
+                        if (this.io) this.io.emit('wa_pairing_code', { code: this.pairingCode });
+                    } catch (err) {
+                        this.lastError = err.message;
+                        this.log(`❌ Failed to request pairing code: ${err.message}`, 'error');
+                    }
+                }, 4000); // Increased wait to 4s
+            }
+
+            // Connection Update Handler
+            this.sock.ev.on('connection.update', async (update) => {
+                const { connection, lastDisconnect, qr } = update;
+
+                if (qr) {
+                    this.log('QR RECEIVED (Fallback)');
+                    this.qrCodeUrl = qr;
+                    if (!this.phoneNumber) { // Only status QR if we are not using pairing code
+                        this.status = 'QR_READY';
+                        if (this.io) this.io.emit('wa_qr', { qr });
+                    }
                 }
-            }, 3000);
+
+                if (connection === 'close') {
+                    const error = lastDisconnect?.error;
+                    const statusCode = error?.output?.statusCode;
+                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+                    this.lastError = `Connection Closed. Code: ${statusCode}. Details: ${error?.message}`;
+                    this.log(`Connection closed. Reconnecting?: ${shouldReconnect}. Error: ${this.lastError}`, 'warn');
+
+                    this.status = 'DISCONNECTED';
+                    if (shouldReconnect) {
+                        // Retry with delay
+                        setTimeout(() => this.initializeClient(this.phoneNumber), 2000);
+                    } else {
+                        this.log('Logged out fatal error. Delete auth to restart.', 'error');
+                    }
+                    if (this.io) this.io.emit('wa_status', { status: 'DISCONNECTED' });
+                } else if (connection === 'open') {
+                    this.log('WHATSAPP CLIENT IS READY! 🚀');
+                    this.status = 'READY';
+                    this.qrCodeUrl = null;
+                    this.pairingCode = null;
+                    this.lastError = null;
+                    if (this.io) this.io.emit('wa_status', { status: 'READY' });
+                }
+            });
+
+            // Creds Update Handler
+            this.sock.ev.on('creds.update', saveCreds);
+
+            // Message Handler
+            this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+                if (type !== 'notify') return;
+
+                for (const msg of messages) {
+                    if (!msg.message) continue;
+
+                    // Extract Body
+                    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+                    if (!text) continue;
+
+                    // Sender
+                    const from = msg.key.remoteJid;
+                    const isMe = msg.key.fromMe;
+                    this.log(`MESSAGE RECEIVED from ${from}: ${text.substring(0, 20)}...`);
+
+                    if (this.io) this.io.emit('wa_log', {
+                        from: from.replace('@s.whatsapp.net', ''),
+                        body: text,
+                        timestamp: new Date()
+                    });
+
+                    if (isMe) continue; // Don't reply to self
+
+                    // Ping-Pong Test
+                    if (text === '!ping') {
+                        await this.sock.sendMessage(from, { text: 'pong' });
+                    }
+
+                    // CRM INTEGRATION
+                    if (text.toLowerCase().includes('precio') || text.toLowerCase().includes('información')) {
+                        const leadData = {
+                            name: msg.pushName || 'Unknown User',
+                            phone: from.replace('@s.whatsapp.net', ''),
+                            query: text,
+                            source: 'WhatsApp SaaS'
+                        };
+                        await this.sendToCRM(leadData);
+                    }
+                }
+            });
+
+        } catch (fatalErr) {
+            this.lastError = fatalErr.message;
+            this.log(`FATAL INIT ERROR: ${fatalErr.message}`, 'error');
         }
-
-        // Connection Update Handler
-        this.sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
-
-            if (qr) {
-                console.log('QR RECEIVED (Fallback)');
-                this.qrCodeUrl = qr;
-                if (!this.phoneNumber) { // Only status QR if we are not using pairing code
-                    this.status = 'QR_READY';
-                    if (this.io) this.io.emit('wa_qr', { qr });
-                }
-            }
-
-            if (connection === 'close') {
-                const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-                console.log('Connection closed. Reconnecting?: ', shouldReconnect);
-                this.status = 'DISCONNECTED';
-                if (shouldReconnect) {
-                    this.initializeClient(this.phoneNumber);
-                } else {
-                    console.log('Logged out. Delete auth folder to restart.');
-                }
-                if (this.io) this.io.emit('wa_status', { status: 'DISCONNECTED' });
-            } else if (connection === 'open') {
-                console.log('WHATSAPP CLIENT IS READY!');
-                this.status = 'READY';
-                this.qrCodeUrl = null;
-                this.pairingCode = null;
-                if (this.io) this.io.emit('wa_status', { status: 'READY' });
-            }
-        });
-
-        // Creds Update Handler
-        this.sock.ev.on('creds.update', saveCreds);
-
-        // Message Handler
-        this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
-            if (type !== 'notify') return;
-
-            for (const msg of messages) {
-                if (!msg.message) continue;
-
-                // Extract Body
-                const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
-                if (!text) continue;
-
-                // Sender
-                const from = msg.key.remoteJid;
-                const isMe = msg.key.fromMe;
-                console.log('MESSAGE RECEIVED:', text, 'FROM:', from);
-
-                if (this.io) this.io.emit('wa_log', {
-                    from: from.replace('@s.whatsapp.net', ''),
-                    body: text,
-                    timestamp: new Date()
-                });
-
-                if (isMe) continue; // Don't reply to self
-
-                // Ping-Pong Test
-                if (text === '!ping') {
-                    await this.sock.sendMessage(from, { text: 'pong' });
-                }
-
-                // CRM INTEGRATION
-                if (text.toLowerCase().includes('precio') || text.toLowerCase().includes('información')) {
-                    const leadData = {
-                        name: msg.pushName || 'Unknown User',
-                        phone: from.replace('@s.whatsapp.net', ''),
-                        query: text,
-                        source: 'WhatsApp SaaS'
-                    };
-                    await this.sendToCRM(leadData);
-                }
-            }
-        });
     }
 
     async sendToCRM(leadData) {
         const CRM_WEBHOOK_URL = process.env.CRM_WEBHOOK_URL;
         if (!CRM_WEBHOOK_URL) {
-            console.log("⚠️ CRM Webhook not configured.");
+            this.log("⚠️ CRM Webhook not configured.", 'warn');
             return;
         }
 
         try {
             const axios = require('axios');
-            console.log(`🚀 Sending Lead to CRM: ${leadData.name}`);
+            this.log(`🚀 Sending Lead to CRM: ${leadData.name}`);
 
             await axios.post(CRM_WEBHOOK_URL, {
                 fields: {
@@ -158,9 +183,10 @@ class WhatsAppService {
                     SOURCE_ID: "WHATSAPP"
                 }
             });
-            console.log("✅ Lead synced to CRM!");
+            this.log("✅ Lead synced to CRM!");
         } catch (error) {
-            console.error("❌ Failed to sync to CRM:", error.message);
+            this.lastError = error.message;
+            this.log(`❌ Failed to sync to CRM: ${error.message}`, 'error');
         }
     }
 
@@ -169,7 +195,9 @@ class WhatsAppService {
             status: this.status,
             qr: this.qrCodeUrl,
             pairingCode: this.pairingCode,
-            phoneNumber: this.phoneNumber
+            phoneNumber: this.phoneNumber,
+            last_error: this.lastError,
+            logs: this.logs // Expose logs
         };
     }
 }
