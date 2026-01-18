@@ -90,8 +90,9 @@ class WhatsAppService {
                 defaultQueryTimeoutMs: 60000,
                 retryRequestDelayMs: 5000,
                 keepAliveIntervalMs: 30000,
-                // 5. Proxy Agent
-                agent: agent
+                // 5. Proxy Agent (Applied to BOTH WS and HTTP)
+                agent: agent,
+                fetchAgent: agent
             });
 
             // Pairing Code Logic
