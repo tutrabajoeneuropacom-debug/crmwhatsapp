@@ -54,13 +54,27 @@ app.get('/api/whatsapp/status', (req, res) => {
   res.json(whatsappService.getStatus());
 });
 
-app.post('/api/whatsapp/pair', (req, res) => {
-  const { phoneNumber } = req.body;
-  if (!phoneNumber) return res.status(400).json({ error: 'Phone number is required' });
+const handlePairing = (req, res) => {
+  // Support body (POST) or query param (GET)
+  const phoneNumber = req.body.phoneNumber || req.query.phoneNumber;
+
+  if (!phoneNumber) {
+    return res.status(400).json({
+      error: 'Phone number is required.',
+      usage_example: '/api/whatsapp/pair?phoneNumber=5491123456789'
+    });
+  }
 
   whatsappService.initializeClient(phoneNumber);
-  res.json({ message: `Pairing initiated for ${phoneNumber}. Check /api/whatsapp/status for code.` });
-});
+  res.json({
+    success: true,
+    message: `Pairing initiated for ${phoneNumber}.`,
+    next_step: 'Wait 5 seconds, then go to /api/whatsapp/status to see your code.'
+  });
+};
+
+app.post('/api/whatsapp/pair', handlePairing);
+app.get('/api/whatsapp/pair', handlePairing);
 
 app.post('/api/whatsapp/restart', (req, res) => {
   whatsappService.initializeClient();
