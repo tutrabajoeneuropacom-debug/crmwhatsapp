@@ -46,7 +46,15 @@ class WhatsAppService {
     }
 
     async initializeClient(phoneNumber) {
-        this.log("Initializing WhatsApp Client (Baileys + Supabase Persistence)...");
+        // 1. Throttle Reconnections (Prevent Loops)
+        const now = Date.now();
+        if (this.lastInitTime && (now - this.lastInitTime) < 5000) {
+            this.log('⚠️ Throttling: Connection attempt too fast. Ignoring.', 'warn');
+            return;
+        }
+        this.lastInitTime = now;
+
+        this.log("Initializing WhatsApp Client (Baileys + Supabase)...");
         this.lastError = null;
         if (phoneNumber) this.phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
 
@@ -58,8 +66,9 @@ class WhatsAppService {
                 logger: pino({ level: 'silent' }),
                 printQRInTerminal: false,
                 auth: state,
-                browser: ["TalkMe AI", "Chrome", "1.0.0"],
+                browser: ["Ubuntu", "Chrome", "20.0.04"], // Camouflage as Linux Desktop
                 connectTimeoutMs: 60000,
+                retryRequestDelayMs: 2000,
             });
 
             // Pairing Code Logic
