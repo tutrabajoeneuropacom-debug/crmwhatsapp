@@ -3,9 +3,9 @@ if (!global.crypto) {
     global.crypto = require('crypto');
 }
 
-const { makeWASocket, DisconnectReason, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const { makeWASocket, DisconnectReason, makeCacheableSignalKeyStore, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const useSupabaseAuthState = require('./supabaseAuthState');
+// const useSupabaseAuthState = require('./supabaseAuthState'); // Disabled for testing
 const { createClient } = require('@supabase/supabase-js');
 const { HttpsProxyAgent } = require('https-proxy-agent'); // Proxy support
 
@@ -54,13 +54,14 @@ class WhatsAppService {
         }
         this.lastInitTime = now;
 
-        this.log("Initializing WhatsApp Client (Baileys + Supabase)...");
+        this.log("Initializing WhatsApp Client (LOCAL FILE STORAGE + PROXY)...");
         this.lastError = null;
         if (phoneNumber) this.phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
 
         try {
-            // Auth management via Supabase
-            const { state, saveCreds } = await useSupabaseAuthState(supabase);
+            // Auth management via LOCAL FILE SYSTEM (latency check)
+            // const { state, saveCreds } = await useSupabaseAuthState(supabase);
+            const { state, saveCreds } = await useMultiFileAuthState("auth_info_baileys");
 
             // Proxy Configuration (Definitive Solution for 405)
             const proxyUrl = process.env.PROXY_URL;
