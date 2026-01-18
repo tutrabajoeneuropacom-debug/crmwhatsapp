@@ -54,6 +54,14 @@ app.get('/api/whatsapp/status', (req, res) => {
   res.json(whatsappService.getStatus());
 });
 
+app.post('/api/whatsapp/pair', (req, res) => {
+  const { phoneNumber } = req.body;
+  if (!phoneNumber) return res.status(400).json({ error: 'Phone number is required' });
+
+  whatsappService.initializeClient(phoneNumber);
+  res.json({ message: `Pairing initiated for ${phoneNumber}. Check /api/whatsapp/status for code.` });
+});
+
 app.post('/api/whatsapp/restart', (req, res) => {
   whatsappService.initializeClient();
   res.json({ message: 'Restarting WhatsApp Client...' });
@@ -63,6 +71,12 @@ app.get('/', (req, res) => {
   res.json({
     status: 'online',
     server: 'mvp-idiomas-server',
+    mode: 'Baileys + Pairing Code',
+    instructions: {
+      step1: 'Send POST /api/whatsapp/pair with { "phoneNumber": "54911..." }',
+      step2: 'Check GET /api/whatsapp/status for "pairingCode"',
+      step3: 'Enter code in WhatsApp > Linked Devices'
+    },
     checks: {
       openai: !!process.env.OPENAI_API_KEY,
       elevenlabs: !!process.env.ELEVENLABS_API_KEY,

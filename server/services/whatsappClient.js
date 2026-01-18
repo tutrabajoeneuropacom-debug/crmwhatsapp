@@ -13,17 +13,26 @@ class WhatsAppService {
         this.sock = null;
         this.status = 'DISCONNECTED';
         this.qrCodeUrl = null;
+        this.pairingCode = null;
+        this.phoneNumber = null;
         this.io = null;
-        // Don't init immediately, wait for setSocket
+        // Don't init immediately, wait for setSocket or pair request
     }
 
     setSocket(io) {
         this.io = io;
-        this.initializeClient();
+        // Try auto-init if we have a phone number in env, otherwise wait
+        const envPhone = process.env.WHATSAPP_PHONE;
+        if (envPhone) {
+            this.initializeClient(envPhone);
+        } else {
+            this.initializeClient(); // Default init (might wait for QR if no session)
+        }
     }
 
-    async initializeClient() {
+    async initializeClient(phoneNumber) {
         console.log("Initializing WhatsApp Client (Baileys + Supabase Persistence)...");
+        if (phoneNumber) this.phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
 
         // Auth management via Supabase
         const { state, saveCreds } = await useSupabaseAuthState(supabase);
@@ -36,15 +45,32 @@ class WhatsAppService {
             connectTimeoutMs: 60000,
         });
 
+        // Pairing Code Logic
+        if (!state.creds.registered && this.phoneNumber) {
+            console.log(`📱 Requesting Pairing Code for ${this.phoneNumber}...`);
+            setTimeout(async () => {
+                try {
+                    this.pairingCode = await this.sock.requestPairingCode(this.phoneNumber);
+                    console.log(`✅ PAIRING CODE: ${this.pairingCode}`);
+                    this.status = 'PAIRING_READY';
+                    if (this.io) this.io.emit('wa_pairing_code', { code: this.pairingCode });
+                } catch (err) {
+                    console.error('❌ Failed to request pairing code:', err);
+                }
+            }, 3000);
+        }
+
         // Connection Update Handler
         this.sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
             if (qr) {
-                console.log('QR RECEIVED');
-                this.qrCodeUrl = qr; // Baileys gives raw string
-                this.status = 'QR_READY';
-                if (this.io) this.io.emit('wa_qr', { qr });
+                console.log('QR RECEIVED (Fallback)');
+                this.qrCodeUrl = qr;
+                if (!this.phoneNumber) { // Only status QR if we are not using pairing code
+                    this.status = 'QR_READY';
+                    if (this.io) this.io.emit('wa_qr', { qr });
+                }
             }
 
             if (connection === 'close') {
@@ -52,7 +78,7 @@ class WhatsAppService {
                 console.log('Connection closed. Reconnecting?: ', shouldReconnect);
                 this.status = 'DISCONNECTED';
                 if (shouldReconnect) {
-                    this.initializeClient();
+                    this.initializeClient(this.phoneNumber);
                 } else {
                     console.log('Logged out. Delete auth folder to restart.');
                 }
@@ -61,6 +87,7 @@ class WhatsAppService {
                 console.log('WHATSAPP CLIENT IS READY!');
                 this.status = 'READY';
                 this.qrCodeUrl = null;
+                this.pairingCode = null;
                 if (this.io) this.io.emit('wa_status', { status: 'READY' });
             }
         });
@@ -140,7 +167,9 @@ class WhatsAppService {
     getStatus() {
         return {
             status: this.status,
-            qr: this.qrCodeUrl
+            qr: this.qrCodeUrl,
+            pairingCode: this.pairingCode,
+            phoneNumber: this.phoneNumber
         };
     }
 }
