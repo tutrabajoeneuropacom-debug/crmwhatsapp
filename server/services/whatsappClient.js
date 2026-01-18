@@ -65,10 +65,13 @@ class WhatsAppService {
 
             // Proxy Configuration (Definitive Solution for 405)
             const proxyUrl = process.env.PROXY_URL;
-            let agent = undefined;
+            let wsAgent = undefined;
+            let httpAgent = undefined;
+
             if (proxyUrl) {
                 this.log(`🌐 Using Proxy: ${proxyUrl.replace(/:[^:]*@/, ':***@')}`);
-                agent = new HttpsProxyAgent(proxyUrl);
+                wsAgent = new HttpsProxyAgent(proxyUrl);
+                httpAgent = new HttpsProxyAgent(proxyUrl);
             }
 
             // CONSENSUS CONFIGURATION
@@ -80,20 +83,20 @@ class WhatsAppService {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
                 },
-                // 1. Generic Linux to avoid version fingerprinting
-                browser: ['Chrome (Linux)', '', ''],
+                // 1. MacOS Signature (Common Desktop User)
+                browser: ['Mac OS', 'Chrome', '10.15.7'],
                 // 2. Critical for Serverless
                 syncFullHistory: false,
-                // 3. Ninja Mode
-                markOnlineOnConnect: false,
+                // 3. Standard Mode (Ninja off)
+                markOnlineOnConnect: true,
                 // 4. Stability Settings
                 connectTimeoutMs: 60000,
                 defaultQueryTimeoutMs: 60000,
                 retryRequestDelayMs: 5000,
                 keepAliveIntervalMs: 30000,
-                // 5. Proxy Agent (Applied to BOTH WS and HTTP)
-                agent: agent,
-                fetchAgent: agent
+                // 5. Proxy Agents (Separated)
+                agent: wsAgent,
+                fetchAgent: httpAgent
             });
 
             // Pairing Code Logic
