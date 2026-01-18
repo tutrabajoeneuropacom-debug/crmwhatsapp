@@ -43,43 +43,20 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 
-// --- WHATSAPP CLOUD API SERVICE ---
-const whatsappCloud = require('./services/whatsappCloudClient');
+// --- WHATSAPP SERVICE (BAILEYS + SUPABASE) ---
+const whatsappService = require('./services/whatsappClient');
 
-// Now 'io' exists, so we can pass it
-whatsappCloud.setSocket(io);
+// Pass socket.io instance to WhatsApp Service
+whatsappService.setSocket(io);
 
-// 1. Webhook Verification (Required by Meta)
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  // Check if mode and token sent is correct
-  const MY_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'my_secret_verify_token';
-
-  if (mode && token) {
-    if (mode === 'subscribe' && token === MY_VERIFY_TOKEN) {
-      console.log('✅ WEBHOOK_VERIFIED');
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  } else {
-    res.sendStatus(400); // Bad Request
-  }
-});
-
-// 2. Receive Messages (POST)
-app.post('/webhook', async (req, res) => {
-  await whatsappCloud.processWebhook(req.body);
-  res.sendStatus(200);
-});
-
+// API Endpoints for WhatsApp Client
 app.get('/api/whatsapp/status', (req, res) => {
-  // Cloud API doesn't have "connection status" like sockets
-  // We return READY to keep frontend happy
-  res.json({ status: 'READY', qr: null, mode: 'CLOUD_API' });
+  res.json(whatsappService.getStatus());
+});
+
+app.post('/api/whatsapp/restart', (req, res) => {
+  whatsappService.initializeClient();
+  res.json({ message: 'Restarting WhatsApp Client...' });
 });
 
 app.get('/', (req, res) => {

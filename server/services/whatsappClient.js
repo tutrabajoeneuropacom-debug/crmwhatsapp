@@ -1,7 +1,12 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode');
+const { makeWASocket, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const fs = require('fs');
+const useSupabaseAuthState = require('./supabaseAuthState');
+const { createClient } = require('@supabase/supabase-js');
+
+// Initialize internal Supabase Admin for Session Storage
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 class WhatsAppService {
     constructor() {
@@ -9,24 +14,25 @@ class WhatsAppService {
         this.status = 'DISCONNECTED';
         this.qrCodeUrl = null;
         this.io = null;
-        this.initializeClient();
+        // Don't init immediately, wait for setSocket
     }
 
     setSocket(io) {
         this.io = io;
+        this.initializeClient();
     }
 
     async initializeClient() {
-        console.log("Initializing WhatsApp Client (Baileys)...");
+        console.log("Initializing WhatsApp Client (Baileys + Supabase Persistence)...");
 
-        // Auth management
-        const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
+        // Auth management via Supabase
+        const { state, saveCreds } = await useSupabaseAuthState(supabase);
 
         this.sock = makeWASocket({
             logger: pino({ level: 'silent' }),
-            printQRInTerminal: false, // We send it to frontend
+            printQRInTerminal: false,
             auth: state,
-            browser: ["WhatsApp SaaS", "Chrome", "1.0.0"], // Custom Browser Name
+            browser: ["TalkMe AI", "Chrome", "1.0.0"],
             connectTimeoutMs: 60000,
         });
 
