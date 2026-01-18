@@ -28,8 +28,20 @@ const cleanup = (filePath) => {
 
 const http = require('http');
 const { Server } = require('socket.io');
-// --- WHATSAPP CLOUD API ENDPOINTS ---
+// --- CONFIGURATION & SERVER SETUP ---
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+// --- WHATSAPP CLOUD API SERVICE ---
 const whatsappCloud = require('./services/whatsappCloudClient');
+
+// Now 'io' exists, so we can pass it
 whatsappCloud.setSocket(io);
 
 // 1. Webhook Verification (Required by Meta)
