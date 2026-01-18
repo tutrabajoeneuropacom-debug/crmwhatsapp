@@ -49,7 +49,7 @@ export default function Login() {
                 // Auto login workaround or redirect logic
                 if (data.session) {
                     if (accountType === 'freemium') navigate('/payment-setup');
-                    else navigate('/languages');
+                    else navigate('/dashboard');
                 } else {
                     // Caso donde requiere confirmación de email (común en producción)
                     setMessage('Registro creado. Por favor confirma tu email para ingresar.');
@@ -62,7 +62,7 @@ export default function Login() {
                 });
                 if (error) throw error;
                 console.log("Login Exitoso:", data);
-                navigate('/languages');
+                navigate('/dashboard');
             }
         } catch (error) {
             console.error("Catch Error:", error);
