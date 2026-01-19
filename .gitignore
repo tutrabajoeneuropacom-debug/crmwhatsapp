@@ -28,3 +28,10 @@ yarn-error.log*
 .vscode
 *.swp
 *.swo
+
+# WhatsApp Auth Files
+server/auth_info_baileys/
+server/.env
+server/.env.backup
+server/uploads/
+server/audio_cache/
