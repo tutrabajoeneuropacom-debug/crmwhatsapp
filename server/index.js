@@ -105,6 +105,86 @@ app.post('/api/whatsapp/restart', (req, res) => {
   res.json({ message: 'Restarting WhatsApp Client...' });
 });
 
+// --- WHATSAPP CLOUD API (META) ---
+const whatsappCloudAPI = require('./services/whatsappCloudAPI');
+
+// Webhook Verification (GET) - Meta requires this for setup
+app.get('/api/webhook/whatsapp', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  const result = whatsappCloudAPI.verifyWebhook(mode, token, challenge);
+
+  if (result) {
+    res.status(200).send(result);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+// Webhook Message Handler (POST) - Receives incoming messages
+app.post('/api/webhook/whatsapp', async (req, res) => {
+  try {
+    console.log('📨 Webhook received:', JSON.stringify(req.body, null, 2));
+
+    // Process the webhook
+    const messageData = await whatsappCloudAPI.processWebhook(req.body);
+
+    if (messageData && messageData.text) {
+      const { from, text, name } = messageData;
+
+      console.log(`💬 Message from ${name || from}: ${text}`);
+
+      // AI Auto-Response
+      try {
+        const aiRouter = require('./services/aiRouter');
+
+        const systemPrompt = `Eres un asistente virtual de Career Mastery Engine, una plataforma de preparación para entrevistas laborales y optimización de CVs.
+
+Tu rol es:
+- Ayudar a usuarios con información sobre visas de trabajo
+- Responder preguntas sobre preparación de entrevistas
+- Explicar cómo mejorar CVs para sistemas ATS
+- Ser amigable, profesional y conciso (máximo 2-3 líneas por respuesta)
+
+Si te preguntan por precios o planes, menciona que tenemos planes freemium y premium.`;
+
+        const response = await aiRouter.chat(
+          [{ role: 'user', content: text }],
+          { llm: 'gpt-4o' },
+          systemPrompt
+        );
+
+        const replyText = response.text || "Lo siento, no pude procesar tu mensaje.";
+
+        // Send reply via Cloud API
+        await whatsappCloudAPI.sendMessage(from, replyText);
+        console.log(`✅ Replied to ${from}: ${replyText.substring(0, 30)}...`);
+
+      } catch (aiError) {
+        console.error(`❌ AI Response Error: ${aiError.message}`);
+        // Fallback response
+        await whatsappCloudAPI.sendMessage(from,
+          "Gracias por tu mensaje. Un asesor te responderá pronto."
+        );
+      }
+    }
+
+    // Always respond 200 OK to Meta
+    res.sendStatus(200);
+
+  } catch (error) {
+    console.error('❌ Webhook processing error:', error);
+    res.sendStatus(500);
+  }
+});
+
+// Cloud API Status
+app.get('/api/whatsapp/cloud/status', (req, res) => {
+  res.json(whatsappCloudAPI.getStatus());
+});
+
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
