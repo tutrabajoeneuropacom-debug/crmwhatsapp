@@ -351,4 +351,41 @@ whatsapp-conversational-core/
 - Los logs no se actualizan a pesar de múltiples deploys
 - Meta muestra que el webhook está verificado y "messages" está suscrito
 
-**¿Qué estamos pasando por alto?**
+
+---
+
+## ✅ Resolución y Diagnóstico Final (2026-01-20)
+
+### **Causa Raíz Identificada**
+El problema **NO** era de caché de Render ni de Hipótesis 2 o 3.
+El problema era que los archivos **físicos** en el repositorio no coincidían con lo reportado en "Acciones Realizadas". 
+
+1. `server/Dockerfile` tenía explícitamente `CMD [ "node", "index.js" ]` (Servidor viejo).
+2. `server/package.json` tenía explícitamente `"start": "node index.js"`.
+
+Esto garantizaba que, sin importar cuántas veces se redesplegara, siempre se iniciaba el servidor viejo (Baileys) en lugar del nuevo (Cloud API).
+
+### **Acciones Correctivas Aplicadas**
+Se han modificado los archivos para forzar el uso del nuevo servidor:
+
+1. **Actualizado `server/Dockerfile`**:
+   ```dockerfile
+   CMD [ "node", "index-minimal.js" ]
+   ```
+
+2. **Actualizado `server/package.json`**:
+   ```json
+   "start": "node index-minimal.js",
+   "main": "index-minimal.js"
+   ```
+
+### **Próximos Pasos (Para el Usuario)**
+1. **Hacer Commit y Push** de estos cambios a GitHub.
+2. Render detectará el push y redespelgará automáticamente.
+3. **Verificar Logs**: Ahora DEBERÍA aparecer:
+   ```
+   🚀 Starting WhatsApp Cloud API Server...
+   ✅ Webhook URL: /api/webhook/whatsapp
+   ```
+4. **Probar WhatsApp**: Enviar un mensaje y verificar logs `📨 Webhook received`.
+

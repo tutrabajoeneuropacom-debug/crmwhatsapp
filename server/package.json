@@ -2,12 +2,12 @@
   "name": "mvp-idiomas-server",
   "version": "1.0.1",
   "description": "Backend for MVP Idiomas AI - Career Mastery Engine",
-  "main": "index.js",
+  "main": "index-minimal.js",
   "engines": {
     "node": ">=16.0.0"
   },
   "scripts": {
-    "start": "node index.js",
+    "start": "node index-minimal.js",
     "dev": "nodemon index-baileys.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
