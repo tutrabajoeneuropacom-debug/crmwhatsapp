@@ -14,4 +14,4 @@ COPY . .
 
 EXPOSE 3000
 
-CMD [ "node", "index-minimal.js" ]
+CMD [ "node", "index.js" ]

@@ -7,8 +7,8 @@
     "node": ">=16.0.0"
   },
   "scripts": {
-    "start": "node index-minimal.js",
-    "dev": "nodemon index.js",
+    "start": "node index.js",
+    "dev": "nodemon index-baileys.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
