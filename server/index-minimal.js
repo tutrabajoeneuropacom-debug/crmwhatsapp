@@ -150,6 +150,17 @@ Si te preguntan por precios o planes, menciona que tenemos planes freemium y pre
                     }
                 }
 
+                // --- SYNC TO COPPER CRM ---
+                try {
+                    const copperService = require('./services/copperService');
+                    // We don't await this to avoid slowing down the WhatsApp response
+                    copperService.syncUser(from, name).then(contact => {
+                        if (contact) console.log('🔗 Synced with Copper CRM');
+                    });
+                } catch (crmErr) {
+                    console.error('⚠️ CRM Sync failed:', crmErr.message);
+                }
+
             } catch (aiError) {
                 console.error(`❌ AI Response Error: ${aiError.message}`);
                 // Fallback response
