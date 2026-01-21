@@ -387,5 +387,86 @@ Se han modificado los archivos para forzar el uso del nuevo servidor:
    🚀 Starting WhatsApp Cloud API Server...
    ✅ Webhook URL: /api/webhook/whatsapp
    ```
-4. **Probar WhatsApp**: Enviar un mensaje y verificar logs `📨 Webhook received`.
+
+---
+
+## ✅ Hito Alcanzado: Despliegue Exitoso (2026-01-20 20:31)
+
+**Estado:** 🟢 **RESUELTO** (El servidor correcto está corriendo)
+
+**Evidencia (Logs de Render):**
+```
+🚀 Starting WhatsApp Cloud API Server...
+✅ WhatsApp Cloud API initialized
+   Phone Number ID: 956780224186740
+✅ Server running on port 3000
+📡 Webhook URL: /api/webhook/whatsapp
+🤖 WhatsApp Cloud API Status: Configured
+```
+
+### 🧪 Próximos Pasos: Validación Funcional
+
+Ahora que el servidor está escuchando, debemos validar que los mensajes fluyan de extremo a extremo.
+
+1.  **Enviar Mensaje de Prueba:**
+    - Desde tu celular (WhatsApp personal) o el simulador de Meta.
+    - Envía: "Hola, quiero mejorar mi CV".
+
+2.  **Verificar Logs en Render:**
+    - Debemos ver: `📨 Webhook received: ...`
+    - Y luego: `✅ Replied to ...`
+
+3.  **Confirmar Respuesta en WhatsApp:**
+    - El bot debería responder con algo como: "Hola, soy el asistente virtual...".
+
+
+
+
+### ✅ Diagnóstico Exitoso (21:50): ¡El Webhook Funciona!
+
+**¡Excelentes noticias!** Los logs confirman que el mensaje de prueba LLEGÓ al servidor.
+`📨 Webhook received: ...`
+
+El "tubo" está conectado. Meta y Render están hablando.
+
+**🚨 Nuevos Problemas Detectados (Credenciales):**
+
+Sin embargo, el bot no puede responder porque **las llaves están vencidas o incorrectas**:
+
+1.  **Error de WhatsApp (Token Vencido):**
+    - Log: `Error validating access token: Session has expired`
+    - Causa: El token temporal de 24 horas (`EAARY...`) ya caducó.
+    - **Solución:** Generar un nuevo token en Meta y actualizarlo en Render.
+
+2.  **Error de OpenAI (API Key Inválida):**
+    - Log: `401 Incorrect API key provided`
+    - Causa: La `OPENAI_API_KEY` configurada en Render no es válida o está mal copiada.
+    - **Solución:** Verificar la API Key en OpenAI y corregirla en Render.
+
+---
+
+## 🛠️ Plan de Acción Inmediato
+
+### Paso 1: Renovar Token de WhatsApp
+1. En el menú de la izquierda, haz clic en **Prueba de API** (o API Setup).
+2. En la parte superior de esa página, verás un campo grande que dice **"Token de acceso temporal"**.
+   - Empieza con `EAARY...`
+   - Si no aparece, recarga la página.
+3. Copia ese código largo.
+4. Ve a **Render** > **Environment**.
+5. Edita `WHATSAPP_ACCESS_TOKEN` y pega el nuevo token.
+
+### Paso 2: Corregir OpenAI Key
+1. Ve a **Render** > **Environment**.
+2. Edita `OPENAI_API_KEY`. Asegúrate de que no tenga espacios extra y sea la correcta (empieza con `sk-proj-...`).
+
+### Paso 3: Guardar y Redeploy
+1. Guarda los cambios en Render.
+2. Render se reiniciará solo.
+3. Prueba enviar "Hola" de nuevo.
+
+
+
+
+
 

@@ -4,6 +4,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js'); // Add Supabase
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,6 +18,22 @@ console.log('🚀 Starting WhatsApp Cloud API Server...');
 
 // WhatsApp Cloud API Service
 const whatsappCloudAPI = require('./services/whatsappCloudAPI');
+
+// Initialize Supabase (If configured)
+let supabaseAdmin = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+        supabaseAdmin = createClient(
+            process.env.SUPABASE_URL,
+            process.env.SUPABASE_SERVICE_ROLE_KEY
+        );
+        console.log('✅ Supabase connected for logging (Cooper/Dashboard)');
+    } catch (e) {
+        console.error('❌ Supabase Init Error:', e.message);
+    }
+} else {
+    console.warn('⚠️ Supabase credentials missing. Activity will not be logged to Dashboard.');
+}
 
 // Health check
 app.get('/health', (req, res) => {
@@ -39,7 +56,8 @@ app.get('/', (req, res) => {
         mode: 'WhatsApp Cloud API (Meta)',
         checks: {
             whatsapp_configured: !!process.env.WHATSAPP_ACCESS_TOKEN,
-            openai: !!process.env.OPENAI_API_KEY
+            openai: !!process.env.OPENAI_API_KEY,
+            supabase_logging: !!supabaseAdmin
         },
         timestamp: new Date().toISOString()
     });
@@ -84,7 +102,7 @@ app.post('/api/webhook/whatsapp', async (req, res) => {
             try {
                 const OpenAI = require('openai');
                 const openai = new OpenAI({
-                    apiKey: process.env.OPENAI_API_KEY
+                    apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : ''
                 });
 
                 const systemPrompt = `Eres un asistente virtual de Career Mastery Engine, una plataforma de preparación para entrevistas laborales y optimización de CVs.
@@ -111,6 +129,26 @@ Si te preguntan por precios o planes, menciona que tenemos planes freemium y pre
                 // Send reply via Cloud API
                 await whatsappCloudAPI.sendMessage(from, replyText);
                 console.log(`✅ Replied to ${from}: ${replyText.substring(0, 30)}...`);
+
+                // --- LOG TO DASHBOARD (Connect to Cooper) ---
+                if (supabaseAdmin) {
+                    try {
+                        // Estimate cost: ~$0.005 per turn is a safe average for short GPT-4o messages
+                        const estimatedCost = 0.005;
+
+                        await supabaseAdmin.from('usage_logs').insert({
+                            input_text: `[WA] ${text} (User: ${from})`,
+                            translated_text: replyText, // Using 'translated_text' column for output
+                            provider_llm: 'gpt-4o-whatsapp',
+                            cost_estimated: estimatedCost,
+                            is_cache_hit: false,
+                            created_at: new Date()
+                        });
+                        console.log('📊 Logged to Dashboard (Cooper)');
+                    } catch (logErr) {
+                        console.error('⚠️ Failed to log to dashboard:', logErr.message);
+                    }
+                }
 
             } catch (aiError) {
                 console.error(`❌ AI Response Error: ${aiError.message}`);
