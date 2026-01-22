@@ -266,6 +266,56 @@ Si te preguntan por precios o planes, menciona que tenemos planes freemium y pre
     }
 });
 
+// --- WEB CHAT ENDPOINT (For Website Widget) ---
+app.post('/api/chat', async (req, res) => {
+    try {
+        const { message, sessionId } = req.body;
+
+        if (!message) return res.status(400).json({ error: 'Message required' });
+
+        console.log(`💬 Web Chat from ${sessionId}: ${message}`);
+
+        // Reuse AI Logic
+        const OpenAI = require('openai');
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : ''
+        });
+
+        const systemPrompt = `Eres un asistente virtual de Career Mastery Engine... (Mismo que WhatsApp)`;
+
+        const completion = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: "Eres Cooper, el asistente IA amigable y profesional de Career Mastery Engine." },
+                { role: 'user', content: message }
+            ],
+            max_tokens: 150
+        });
+
+        const replyText = completion.choices[0].message.content;
+
+        // Log to Dashboard
+        if (supabaseAdmin) {
+            try {
+                await supabaseAdmin.from('usage_logs').insert({
+                    input_text: `[WEB] ${message} (Session: ${sessionId})`,
+                    translated_text: replyText,
+                    provider_llm: 'gpt-4o-web',
+                    cost_estimated: 0.005,
+                    is_cache_hit: false,
+                    created_at: new Date()
+                });
+            } catch (e) { console.error(e); }
+        }
+
+        res.json({ reply: replyText });
+
+    } catch (error) {
+        console.error('❌ Web Chat Error:', error.message);
+        res.status(500).json({ error: 'AI processing failed' });
+    }
+});
+
 // Error handler
 app.use((err, req, res, next) => {
     console.error('Unhandled Error:', err);
