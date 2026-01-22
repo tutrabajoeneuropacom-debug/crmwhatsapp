@@ -19,34 +19,47 @@ class CopperCRM {
     /**
      * Find or create a person by phone number
      */
-    async syncUser(phone, name) {
-        if (!this.apiKey) {
-            console.warn('⚠️ Copper CRM API Key missing');
-            return null;
-        }
+    async syncUser(phone, name, email) {
+        if (!this.apiKey) return null;
 
         try {
-            // 1. Search for existing person
-            const searchRes = await axios.post(`${this.baseUrl}/people/search`, {
-                phone_numbers: [{ number: phone }]
-            }, { headers: this.headers });
+            let person = null;
 
-            let person = searchRes.data?.[0];
-
-            // 2. If not found, create new person
-            if (!person) {
-                console.log(`👤 Creating new Copper Contact: ${name || phone}`);
-                const createRes = await axios.post(`${this.baseUrl}/people`, {
-                    name: name || `WhatsApp User ${phone}`,
-                    phone_numbers: [{ number: phone, category: 'mobile' }]
+            // 1. Search by Email
+            if (email) {
+                const searchEmail = await axios.post(`${this.baseUrl}/people/search`, {
+                    emails: [{ email: email }]
                 }, { headers: this.headers });
-                person = createRes.data;
-            } else {
-                console.log(`👤 Found existing Copper Contact: ${person.name} (${person.id})`);
+                person = searchEmail.data?.[0];
             }
 
-            // 3. Log activity (Optional: Add a Note or ActivityType)
-            await this.logActivity(person.id, `WhatsApp interaction`);
+            // 2. Search by Phone (if not found yet)
+            if (!person && phone) {
+                const searchPhone = await axios.post(`${this.baseUrl}/people/search`, {
+                    phone_numbers: [{ number: phone }]
+                }, { headers: this.headers });
+                person = searchPhone.data?.[0];
+            }
+
+            // 3. Create or Update
+            const payload = {
+                name: name || (person ? undefined : `User ${phone || email}`),
+                emails: email ? [{ email, category: 'work' }] : undefined,
+                phone_numbers: phone ? [{ number: phone, category: 'mobile' }] : undefined
+            };
+
+            if (!person) {
+                console.log(`👤 Creating Copper Contact: ${name || email || phone}`);
+                const createRes = await axios.post(`${this.baseUrl}/people`, payload, { headers: this.headers });
+                person = createRes.data;
+            } else {
+                console.log(`👤 Updating Copper Contact: ${person.name}`);
+                // Only update if we have new info worth adding (simplified for MVP)
+                // In a real app we'd merge fields. reliable update needs person_id
+                if (email || phone) {
+                    await axios.put(`${this.baseUrl}/people/${person.id}`, payload, { headers: this.headers });
+                }
+            }
 
             return person;
 
@@ -54,11 +67,6 @@ class CopperCRM {
             console.error('❌ Copper CRM Error:', error.response?.data || error.message);
             return null;
         }
-    }
-
-    async logActivity(personId, details) {
-        // Copper "Activity" implementation would go here
-        // For MVP, we just ensure the user exists
     }
 }
 

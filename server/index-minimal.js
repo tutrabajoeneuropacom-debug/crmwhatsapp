@@ -266,14 +266,50 @@ Si te preguntan por precios o planes, menciona que tenemos planes freemium y pre
     }
 });
 
+// Global Chat Status (In-memory for MVP - resets on restart)
+// To make persistent, you'd use Supabase/Redis
+global.chatEnabled = true;
+
+app.get('/api/chat/status', (req, res) => {
+    res.json({ enabled: global.chatEnabled });
+});
+
+app.post('/api/chat/status', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') {
+        global.chatEnabled = enabled;
+        console.log(`🔌 Web Chat IS NOW: ${enabled ? 'ON' : 'OFF'}`);
+        res.json({ success: true, enabled: global.chatEnabled });
+    } else {
+        res.status(400).json({ error: 'Boolean "enabled" required' });
+    }
+});
+
 // --- WEB CHAT ENDPOINT (For Website Widget) ---
 app.post('/api/chat', async (req, res) => {
+    // Check if enabled
+    if (!global.chatEnabled) {
+        return res.status(503).json({
+            error: 'Chat is currently disabled',
+            reply: 'El chat está deshabilitado temporalmente.'
+        });
+    }
+
     try {
-        const { message, sessionId } = req.body;
+        const { message, sessionId, userData } = req.body;
 
         if (!message) return res.status(400).json({ error: 'Message required' });
 
         console.log(`💬 Web Chat from ${sessionId}: ${message}`);
+
+        // Sync to Copper (Async) - If user provided data in Lead Form
+        if (userData && (userData.name || userData.email || userData.phone)) {
+            try {
+                const copperService = require('./services/copperService');
+                copperService.syncUser(userData.phone, userData.name, userData.email)
+                    .then(p => { if (p) console.log('🔗 [Web] Synced with Copper CRM'); });
+            } catch (crmErr) { console.error(crmErr); }
+        }
 
         // Reuse AI Logic
         const OpenAI = require('openai');
@@ -297,8 +333,13 @@ app.post('/api/chat', async (req, res) => {
         // Log to Dashboard
         if (supabaseAdmin) {
             try {
+                // If we have userData, add it to the log to identify better
+                const identifier = userData && userData.email ?
+                    `${userData.email} (Web)` :
+                    `Session: ${sessionId}`;
+
                 await supabaseAdmin.from('usage_logs').insert({
-                    input_text: `[WEB] ${message} (Session: ${sessionId})`,
+                    input_text: `[WEB] ${message} (${identifier})`,
                     translated_text: replyText,
                     provider_llm: 'gpt-4o-web',
                     cost_estimated: 0.005,
