@@ -108,6 +108,71 @@ class WhatsAppCloudAPI {
         }
     }
 
+    async getMediaUrl(mediaId) {
+        try {
+            const response = await axios.get(
+                `${this.baseUrl}/${mediaId}`,
+                {
+                    headers: { 'Authorization': `Bearer ${this.accessToken}` }
+                }
+            );
+            return response.data.url;
+        } catch (error) {
+            console.error('❌ Error getting media URL:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    async uploadMedia(buffer, mimeType) {
+        try {
+            const FormData = require('form-data');
+            const form = new FormData();
+            form.append('file', buffer, { filename: 'audio.mp3', contentType: mimeType });
+            form.append('type', 'audio/mpeg');
+            form.append('messaging_product', 'whatsapp');
+
+            const response = await axios.post(
+                `${this.baseUrl}/${this.phoneNumberId}/media`,
+                form,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.accessToken}`,
+                        ...form.getHeaders()
+                    }
+                }
+            );
+            return response.data.id;
+        } catch (error) {
+            console.error('❌ Error uploading media:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    async sendAudio(to, mediaId) {
+        try {
+            await axios.post(
+                `${this.baseUrl}/${this.phoneNumberId}/messages`,
+                {
+                    messaging_product: 'whatsapp',
+                    recipient_type: 'individual',
+                    to: to,
+                    type: 'audio',
+                    audio: { id: mediaId }
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.accessToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            console.log(`✅ Audio sent to ${to}`);
+        } catch (error) {
+            console.error('❌ Error sending audio:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
     /**
      * Process incoming webhook message
      */
@@ -127,10 +192,18 @@ class WhatsAppCloudAPI {
             const message = messages[0];
             const from = message.from;
             const messageId = message.id;
-            const text = message.text?.body;
             const messageType = message.type;
 
-            console.log(`📨 Received ${messageType} from ${from}: ${text}`);
+            let text = null;
+            let audio = null;
+
+            if (messageType === 'text') {
+                text = message.text?.body;
+            } else if (messageType === 'audio') {
+                audio = message.audio;
+            }
+
+            console.log(`📨 Received ${messageType} from ${from}`);
 
             // Mark as read
             await this.markAsRead(messageId);
@@ -139,6 +212,7 @@ class WhatsAppCloudAPI {
                 from,
                 messageId,
                 text,
+                audio, // { id, mime_type }
                 type: messageType,
                 timestamp: message.timestamp,
                 name: value.contacts?.[0]?.profile?.name
@@ -148,6 +222,8 @@ class WhatsAppCloudAPI {
             return null;
         }
     }
+
+    // ... verification methods ...
 
     /**
      * Verify webhook (for Meta setup)

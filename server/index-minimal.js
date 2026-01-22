@@ -93,19 +93,66 @@ app.post('/api/webhook/whatsapp', async (req, res) => {
         // Process the webhook
         const messageData = await whatsappCloudAPI.processWebhook(req.body);
 
-        if (messageData && messageData.text) {
-            const { from, text, name } = messageData;
+        if (messageData) {
+            const { from, name, type } = messageData;
+            let userText = messageData.text;
+            let isVoiceMessage = (type === 'audio');
 
-            console.log(`💬 Message from ${name || from}: ${text}`);
+            // 1. If Audio, Transcribe it first (Whisper)
+            if (isVoiceMessage && messageData.audio) {
+                try {
+                    console.log('🎤 Voice message received. Transcribing...');
+                    const axios = require('axios');
+                    const FormData = require('form-data');
 
-            // Simple AI response (without complex routing for now)
-            try {
-                const OpenAI = require('openai');
-                const openai = new OpenAI({
-                    apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : ''
-                });
+                    // Get Download URL
+                    const mediaUrl = await whatsappCloudAPI.getMediaUrl(messageData.audio.id);
 
-                const systemPrompt = `Eres un asistente virtual de Career Mastery Engine, una plataforma de preparación para entrevistas laborales y optimización de CVs.
+                    // Download Audio Buffer
+                    const audioResponse = await axios.get(mediaUrl, {
+                        responseType: 'arraybuffer',
+                        headers: { 'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` }
+                    });
+
+                    // Send to Whisper
+                    const formData = new FormData();
+                    formData.append('file', Buffer.from(audioResponse.data), { filename: 'audio.ogg', contentType: 'audio/ogg' });
+                    formData.append('model', 'whisper-1');
+
+                    const OpenAIApi = require('openai');
+                    // Note: We use raw axios for Whisper to handle FormData easily with buffers
+                    const whisperResponse = await axios.post(
+                        'https://api.openai.com/v1/audio/transcriptions',
+                        formData,
+                        {
+                            headers: {
+                                ...formData.getHeaders(),
+                                'Authorization': `Bearer ${process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : ''}`
+                            }
+                        }
+                    );
+
+                    userText = whisperResponse.data.text;
+                    console.log(`🗣️ Transcribed: "${userText}"`);
+
+                } catch (transcribeError) {
+                    console.error('❌ Transcription failed:', transcribeError.message);
+                    userText = "Lo siento, no pude escuchar tu audio. ¿Me lo escribes?";
+                    isVoiceMessage = false; // Fallback to text
+                }
+            }
+
+            if (userText) {
+                console.log(`💬 Processing from ${name || from}: ${userText}`);
+
+                // 2. AI Response (GPT-4o)
+                try {
+                    const OpenAI = require('openai');
+                    const openai = new OpenAI({
+                        apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : ''
+                    });
+
+                    const systemPrompt = `Eres un asistente virtual de Career Mastery Engine, una plataforma de preparación para entrevistas laborales y optimización de CVs.
 
 Tu rol es:
 - Ayudar a usuarios con información sobre visas de trabajo
@@ -115,58 +162,98 @@ Tu rol es:
 
 Si te preguntan por precios o planes, menciona que tenemos planes freemium y premium.`;
 
-                const completion = await openai.chat.completions.create({
-                    model: 'gpt-4o',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: text }
-                    ],
-                    max_tokens: 150
-                });
-
-                const replyText = completion.choices[0].message.content;
-
-                // Send reply via Cloud API
-                await whatsappCloudAPI.sendMessage(from, replyText);
-                console.log(`✅ Replied to ${from}: ${replyText.substring(0, 30)}...`);
-
-                // --- LOG TO DASHBOARD (Connect to Cooper) ---
-                if (supabaseAdmin) {
-                    try {
-                        // Estimate cost: ~$0.005 per turn is a safe average for short GPT-4o messages
-                        const estimatedCost = 0.005;
-
-                        await supabaseAdmin.from('usage_logs').insert({
-                            input_text: `[WA] ${text} (User: ${from})`,
-                            translated_text: replyText, // Using 'translated_text' column for output
-                            provider_llm: 'gpt-4o-whatsapp',
-                            cost_estimated: estimatedCost,
-                            is_cache_hit: false,
-                            created_at: new Date()
-                        });
-                        console.log('📊 Logged to Dashboard (Cooper)');
-                    } catch (logErr) {
-                        console.error('⚠️ Failed to log to dashboard:', logErr.message);
-                    }
-                }
-
-                // --- SYNC TO COPPER CRM ---
-                try {
-                    const copperService = require('./services/copperService');
-                    // We don't await this to avoid slowing down the WhatsApp response
-                    copperService.syncUser(from, name).then(contact => {
-                        if (contact) console.log('🔗 Synced with Copper CRM');
+                    const completion = await openai.chat.completions.create({
+                        model: 'gpt-4o',
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: userText }
+                        ],
+                        max_tokens: 150
                     });
-                } catch (crmErr) {
-                    console.error('⚠️ CRM Sync failed:', crmErr.message);
-                }
 
-            } catch (aiError) {
-                console.error(`❌ AI Response Error: ${aiError.message}`);
-                // Fallback response
-                await whatsappCloudAPI.sendMessage(from,
-                    "Gracias por tu mensaje. Un asesor te responderá pronto."
-                );
+                    const replyText = completion.choices[0].message.content;
+                    console.log(`🤖 AI Reply: ${replyText.substring(0, 30)}...`);
+
+                    // 3. Send Reply (Voice or Text)
+                    if (isVoiceMessage) {
+                        try {
+                            console.log('🔊 Generating Voice Reply (ElevenLabs)...');
+                            const axios = require('axios');
+                            const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+                            const VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel
+
+                            if (!ELEVENLABS_API_KEY) throw new Error('No ElevenLabs Key');
+
+                            const ttsResponse = await axios.post(
+                                `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
+                                {
+                                    text: replyText,
+                                    model_id: "eleven_monolingual_v1",
+                                    voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+                                },
+                                {
+                                    headers: {
+                                        'xi-api-key': ELEVENLABS_API_KEY,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    responseType: 'arraybuffer'
+                                }
+                            );
+
+                            // Upload to WhatsApp
+                            const mediaId = await whatsappCloudAPI.uploadMedia(Buffer.from(ttsResponse.data), 'audio/mpeg');
+
+                            // Send Voice Note
+                            await whatsappCloudAPI.sendAudio(from, mediaId);
+                            console.log('✅ Voice Reply Sent');
+
+                        } catch (ttsError) {
+                            console.error('❌ TTS/Audio Send failed:', ttsError.message);
+                            // Fallback to text
+                            await whatsappCloudAPI.sendMessage(from, replyText);
+                        }
+
+                    } else {
+                        // Text Reply
+                        await whatsappCloudAPI.sendMessage(from, replyText);
+                    }
+
+                    // --- LOG && SYNC ---
+                    // (Dashboard & Copper Logic preserved below)
+                    if (supabaseAdmin) {
+                        try {
+                            const estimatedCost = 0.005; // Base
+                            // If audio involved, cost is higher. logic can be improved.
+
+                            await supabaseAdmin.from('usage_logs').insert({
+                                input_text: `[WA] ${userText} (User: ${from}) ${isVoiceMessage ? '[AUDIO]' : ''}`,
+                                translated_text: replyText,
+                                provider_llm: 'gpt-4o-whatsapp',
+                                cost_estimated: estimatedCost,
+                                is_cache_hit: false,
+                                created_at: new Date()
+                            });
+                            console.log('📊 Logged to Dashboard (Cooper)');
+                        } catch (logErr) {
+                            console.error('⚠️ Failed to log to dashboard:', logErr.message);
+                        }
+                    }
+
+                    // Copper Sync
+                    try {
+                        const copperService = require('./services/copperService');
+                        // We don't await this to avoid slowing down the WhatsApp response
+                        copperService.syncUser(from, name).then(contact => {
+                            if (contact) console.log('🔗 Synced with Copper CRM');
+                        });
+                    } catch (crmErr) {
+                        console.error('⚠️ CRM Sync failed:', crmErr.message);
+                    }
+
+                } catch (aiError) {
+                    console.error(`❌ AI Response Error: ${aiError.message}`);
+                    await whatsappCloudAPI.sendMessage(from, "Tuve un error procesando eso. ¿Intentamos de nuevo?");
+                }
             }
         }
 
