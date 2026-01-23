@@ -175,7 +175,9 @@ Si te preguntan por precios o planes, menciona que tenemos planes freemium y pre
                     console.log(`🤖 AI Reply: ${replyText.substring(0, 30)}...`);
 
                     // 3. Send Reply (Voice or Text)
-                    if (isVoiceMessage) {
+                    // Config: Respond with Voice ALWAYS (as requested via "hacelo con vos/voz")
+                    // Change to (isVoiceMessage) to revert to "only reply voice if spoken to"
+                    if (true) {
                         try {
                             console.log('🔊 Generating Voice Reply (ElevenLabs)...');
                             const axios = require('axios');
