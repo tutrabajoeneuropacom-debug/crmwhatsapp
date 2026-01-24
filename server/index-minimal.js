@@ -211,8 +211,11 @@ Si te preguntan por precios o planes, menciona que tenemos planes freemium y pre
 
                         } catch (ttsError) {
                             console.error('❌ TTS/Audio Send failed:', ttsError.message);
-                            // Fallback to text
-                            await whatsappCloudAPI.sendMessage(from, replyText);
+                            console.error('Stack:', ttsError.stack); // Log stack for Render dashboard
+
+                            // FALLBACK: Inform User (Debug Mode) or just send text
+                            const debugMsg = `(Debug: Fallo en Voz - ${ttsError.message}) \n\n${replyText}`;
+                            await whatsappCloudAPI.sendMessage(from, debugMsg);
                         }
 
                     } else {
