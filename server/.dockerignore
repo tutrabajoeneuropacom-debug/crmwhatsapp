@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Testing
+coverage/
+.nyc_output/
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log
+logs/
+tunnel.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Auth and session data
+auth_info_baileys/
+uploads/
+
+# Git
+.git/
+.gitignore
+
+# Large binaries (tunneling tools)
+*.exe
+ngrok.exe
+cloudflared.exe
+
+# Scripts and tests (not needed in production)
+test-*.js
+check-*.js
+verify-*.js
+whoami.js
+investigate-*.js
+fix-*.js
+force-*.js
+list-*.js
+register-*.js
+plan-*.js
+find-*.js
+
+# Documentation (optional - include if you want docs in image)
+*.md
+!README.md
