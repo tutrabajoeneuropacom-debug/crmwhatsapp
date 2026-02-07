@@ -60,8 +60,14 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Root endpoint
-app.get('/', (req, res) => {
+// Serve Static Assets (Frontend)
+const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
+
+// 1. Serve Static Files
+app.use(express.static(CLIENT_BUILD_PATH));
+
+// 2. API Status (Moved from root)
+app.get('/api', (req, res) => {
     res.json({
         status: 'online',
         server: 'whatsapp-cloud-api-server',
@@ -73,6 +79,21 @@ app.get('/', (req, res) => {
         },
         timestamp: new Date().toISOString()
     });
+});
+
+// 3. Catch-All Handle for React Router (Must be AFTER API routes)
+// This ensures that refreshing page on /#/saas works
+app.get('*', (req, res, next) => {
+    // If it looks like an API request or static file, don't return HTML
+    if (req.path.startsWith('/api') || req.path.includes('.')) {
+        return next();
+    }
+    const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.status(404).send('Frontend build not found. Please run build command.');
+    }
 });
 
 // Global User State (In-Memory for MVP)
