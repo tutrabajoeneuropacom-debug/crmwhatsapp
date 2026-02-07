@@ -1,3 +1,4 @@
+# Force Dockerfile Update
 # Stage 1: Build the React Client
 FROM node:18-alpine as client-builder
 WORKDIR /app/client
