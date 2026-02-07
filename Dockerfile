@@ -3,11 +3,11 @@ FROM node:18-alpine as client-builder
 WORKDIR /app/client
 
 # Copy client package files
-COPY ../client/package*.json ./
+COPY client/package*.json ./
 RUN npm install
 
 # Copy client source code
-COPY ../client/ .
+COPY client/ .
 RUN npm run build
 
 
@@ -16,14 +16,15 @@ FROM node:18-alpine
 WORKDIR /app/server
 
 # Copy server package files
-COPY ../server/package*.json ./
+COPY server/package*.json ./
 RUN npm install --production
 
 # Copy server source code
-COPY ../server/ .
+COPY server/ .
 
 # Copy built frontend assets from Stage 1
 # We put them in specific folder that index-minimal.js expects: ../client/dist
+# Since we are inside container workdir /app/server, we need to mimic that structure
 COPY --from=client-builder /app/client/dist /app/client/dist
 
 # Expose port
