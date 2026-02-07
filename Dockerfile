@@ -1,4 +1,3 @@
-# Force Dockerfile Update
 # Stage 1: Build the React Client
 FROM node:18-alpine as client-builder
 WORKDIR /app/client
@@ -24,8 +23,6 @@ RUN npm install --production
 COPY server/ .
 
 # Copy built frontend assets from Stage 1
-# We put them in specific folder that index-minimal.js expects: ../client/dist
-# Since we are inside container workdir /app/server, we need to mimic that structure
 COPY --from=client-builder /app/client/dist /app/client/dist
 
 # Expose port
