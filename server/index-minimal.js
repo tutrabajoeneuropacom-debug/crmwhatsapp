@@ -213,10 +213,33 @@ app.post('/whatsapp/restart', (req, res) => {
 
 app.get('/health', (req, res) => res.send('OK'));
 
-// --- DASHBOARD DATA MOCKS ---
+// --- DASHBOARD API ENDPOINTS ---
+const handleConnect = (req, res) => {
+    // If QR is ready, return it immediately
+    if (global.qrCodeUrl) {
+        return res.json({
+            success: true,
+            connection_type: 'QR',
+            qr_code: global.qrCodeUrl, // From Baileys Logic
+            instance_id: 'session_default'
+        });
+    }
+
+    // If not ready, tell frontend to wait or listen to socket
+    // But for MVP demo, we can just trigger a restart if disconnected
+    if (global.connectionStatus === 'DISCONNECTED') {
+        connectToWhatsApp(); // Trigger connection start
+        return res.json({ success: false, error: 'Iniciando servicio... intenta de nuevo en 5s' });
+    }
+
+    res.json({ success: false, error: 'Esperando QR... revisa la consola o espera 5s' });
+};
+
+app.post('/saas/connect', handleConnect);      // Route frontend is calling
+app.post('/api/saas/connect', handleConnect);  // Fallback
+
 app.get('/api/logs', (req, res) => res.json([]));
 app.get('/api/uploads', (req, res) => res.json([]));
-app.post('/api/saas/connect', (req, res) => res.json({ success: false, error: 'Use manual QR scan' }));
 
 // --- SPA FALLBACK ---
 app.get('*', (req, res) => {
