@@ -88,7 +88,41 @@ async function connectToWhatsApp() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
-                if (!msg.key.fromMe) console.log('Message received');
+                if (!msg.key.fromMe) {
+                    const id = msg.key.remoteJid;
+                    const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+
+                    if (!text) continue;
+
+                    console.log(`📩 Mensaje de ${id}: ${text}`);
+
+                    try {
+                        let reply = '';
+
+                        // 1. Try OpenAI if Key exists
+                        if (process.env.OPENAI_API_KEY) {
+                            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+                            const completion = await openai.chat.completions.create({
+                                model: "gpt-4o",
+                                messages: [
+                                    { role: "system", content: "Eres un asistente virtual de Xari SaaS. Responde de forma breve, profesional y útil." },
+                                    { role: "user", content: text }
+                                ]
+                            });
+                            reply = completion.choices[0].message.content;
+                        } else {
+                            // 2. Fallback Echo
+                            reply = `🤖 *Xari Bot*: No tengo cerebro (API Key faltante).\nDijiste: "${text}"`;
+                        }
+
+                        // 3. Send Reply
+                        await sock.sendMessage(id, { text: reply });
+                        console.log(`📤 Respuesta enviada: ${reply}`);
+
+                    } catch (e) {
+                        console.error('❌ Error AI:', e);
+                    }
+                }
             }
         }
     });
