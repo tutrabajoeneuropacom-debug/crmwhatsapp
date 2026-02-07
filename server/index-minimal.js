@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require("socket.io");
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
@@ -33,7 +33,7 @@ if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
-    console.log('🔄 Starting Baileys Connection...');
+    console.log('🔄 Starting TalkMe Tutor Connection...');
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
 
@@ -41,10 +41,10 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['TalkMe CRM', 'Chrome', '1.0.0'],
+        browser: ['TalkMe Tutor', 'Chrome', '1.0.0'],
         syncFullHistory: false,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: undefined, // Keep connection alive
+        defaultQueryTimeoutMs: undefined,
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -70,12 +70,10 @@ async function connectToWhatsApp() {
             if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 2000);
             } else {
-                console.log('🚫 Logged out. Clearing session.');
                 try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
                 connectToWhatsApp();
             }
         } else if (connection === 'open') {
-            console.log('✅ WhatsApp Connected!');
             global.connectionStatus = 'READY';
             global.qrCodeUrl = null;
             io.emit('wa_status', { status: 'READY' });
@@ -84,137 +82,138 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- ENHANCED MESSAGE HANDLER ---
+    // --- TALKME TUTOR MESSAGE HANDLER ---
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
                 if (!msg.key.fromMe) {
                     const id = msg.key.remoteJid;
-
-                    // Extract Text from various types
-                    const text = msg.message?.conversation
-                        || msg.message?.extendedTextMessage?.text
-                        || msg.message?.imageMessage?.caption
-                        || msg.message?.videoMessage?.caption;
-
-                    if (!text) continue;
-
-                    console.log(`📩 INCOMING (${id}): "${text}"`);
+                    let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+                    const audioMsg = msg.message?.audioMessage || msg.message?.voiceMessage;
 
                     // Send Blue Tick
                     await sock.readMessages([msg.key]);
 
-                    // Simulate "Typing..."
-                    await sock.sendPresenceUpdate('composing', id);
-                    await new Promise(r => setTimeout(r, 1500)); // 1.5s delay to feel human
+                    // 1. Handle AUDIO (Whisper)
+                    if (audioMsg) {
+                        try {
+                            if (!process.env.OPENAI_API_KEY) throw new Error('No API Key');
 
-                    // AI Reply Logic
+                            console.log('🎤 Listening to Audio...');
+                            await sock.sendPresenceUpdate('composing', id); // Show we are processing
+
+                            // Capture Audio Buffer
+                            const buffer = await downloadMediaMessage(
+                                msg,
+                                'buffer',
+                                { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                            );
+
+                            // Save temp file (Whisper needs file path or compatible stream)
+                            const tempPath = path.join(__dirname, `audio_${Date.now()}.ogg`);
+                            fs.writeFileSync(tempPath, buffer);
+
+                            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+                            const transcription = await openai.audio.transcriptions.create({
+                                file: fs.createReadStream(tempPath),
+                                model: "whisper-1",
+                                language: "en"
+                            });
+                            text = transcription.text;
+                            console.log(`🗣️ Heard: "${text}"`);
+                            fs.unlinkSync(tempPath);
+
+                        } catch (err) {
+                            console.error('Audio Error:', err.message);
+                            await sock.sendMessage(id, { text: '🙉 I couldn\'t hear that properly. Could you write it?' });
+                            continue;
+                        }
+                    }
+
+                    if (!text) continue;
+
+                    // 2. AI Tutor Logic
+                    await sock.sendPresenceUpdate('composing', id);
+                    await new Promise(r => setTimeout(r, 1000));
+
                     try {
                         let replyText = '';
-
-                        // Check API Key
-                        if (!process.env.OPENAI_API_KEY) {
-                            replyText = `🤖 *Xari (Modo Demo)*: Gracias por escribir. Soy un asistente en entrenamiento.\n\n_Tu mensaje:_ "${text}"`;
-                        } else {
+                        if (process.env.OPENAI_API_KEY) {
                             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
                             const completion = await openai.chat.completions.create({
                                 model: "gpt-4o",
                                 messages: [
-                                    { role: "system", content: "Eres Xari, el asistente de ventas IA de Xari SaaS. Responde de forma breve, persuasiva y profesional a los clientes." },
+                                    { role: "system", content: "You are 'TalkMe', a friendly English Language Tutor. \n1. Respond to the user's message in clear, natural English.\n2. If the user makes a grammar mistake, add a section '💡 Correction:' at the end (explain in Spanish).\n3. Keep responses concise." },
                                     { role: "user", content: text }
                                 ],
-                                max_tokens: 150
+                                max_tokens: 300
                             });
                             replyText = completion.choices[0].message.content;
+                        } else {
+                            replyText = `🤖 *TalkMe Demo*: "${text}"`;
                         }
 
-                        // 4. Send Text Reply
+                        // 3. Send Text Correction
                         await sock.sendMessage(id, { text: replyText });
-                        console.log(`📤 Text sent: "${replyText}"`);
 
-                        // 5. Generate & Send Voice Note (TTS)
-                        if (process.env.OPENAI_API_KEY) {
+                        // 4. Send Voice (Only the English part)
+                        if (process.env.OPENAI_API_KEY && replyText) {
                             try {
                                 await sock.sendPresenceUpdate('recording', id);
 
-                                const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-                                const mp3 = await openai.audio.speech.create({
-                                    model: "tts-1",
-                                    voice: "alloy", // Voices: alloy, echo, fable, onyx, nova, shimmer
-                                    input: replyText
-                                });
+                                // Clean text: Remove "Correction:" part so audio is just pure English conversation
+                                let spokenText = replyText;
+                                if (replyText.includes('💡')) {
+                                    spokenText = replyText.split('💡')[0];
+                                }
 
-                                const buffer = Buffer.from(await mp3.arrayBuffer());
+                                if (spokenText.trim().length > 0) {
+                                    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+                                    const mp3 = await openai.audio.speech.create({
+                                        model: "tts-1",
+                                        voice: "alloy",
+                                        input: spokenText.substring(0, 4096)
+                                    });
 
-                                await sock.sendMessage(id, {
-                                    audio: buffer,
-                                    mimetype: 'audio/mp4',
-                                    ptt: true // This makes it look like a recorded voice note
-                                });
-                                console.log(`🗣️ Voice sent!`);
-
-                            } catch (ttsError) {
-                                console.error('❌ TTS Error:', ttsError.message);
-                            }
+                                    const buffer = Buffer.from(await mp3.arrayBuffer());
+                                    await sock.sendMessage(id, {
+                                        audio: buffer,
+                                        mimetype: 'audio/mp4',
+                                        ptt: true
+                                    });
+                                }
+                            } catch (ttsError) { console.error('TTS Error', ttsError); }
                         }
 
                         await sock.sendPresenceUpdate('paused', id);
 
                     } catch (e) {
-                        console.error('❌ AI ERROR:', e.message);
-                        const fallback = `🤖 *Xari*: ${text}`;
-                        await sock.sendMessage(id, { text: fallback });
+                        console.error('AI Error:', e);
+                        await sock.sendMessage(id, { text: '⚠️ Brain offline.' });
                     }
                 }
             }
         }
     });
+
 }
 
-// --- API ENDPOINTS ---
-
-// Force Speak (Test)
-app.post('/saas/speak', async (req, res) => {
-    const { number, message } = req.body;
-    if (!sock) return res.status(503).json({ error: 'WhatsApp Down' });
-    try {
-        const jid = number.includes('@') ? number : `${number}@s.whatsapp.net`;
-        await sock.sendMessage(jid, { text: message || '🤖 Hola! Soy Xari.' });
-        res.json({ success: true, target: jid });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// Dashboard Connect Logic
+// --- API & MOCKS ---
 const handleConnect = async (req, res) => {
-    if (global.qrCodeUrl) {
-        return res.json({ success: true, connection_type: 'QR', qr_code: global.qrCodeUrl, instance_id: 'sess_1' });
-    }
-    if (global.connectionStatus === 'READY') {
-        return res.json({ success: true, message: 'Connected!', instance_id: 'sess_1' });
-    }
+    if (global.qrCodeUrl) return res.json({ success: true, connection_type: 'QR', qr_code: global.qrCodeUrl });
+    if (global.connectionStatus === 'READY') return res.json({ success: true, message: 'Connected!' });
 
-    // Force Restart if stuck
-    console.log('⚡ Forcing Session Reset for Dashboard...');
+    // Aggressive Restart
     try { if (sock) sock.end(undefined); } catch (e) { }
-    try {
-        fs.rmSync(sessionsDir, { recursive: true, force: true });
-        fs.mkdirSync(sessionsDir, { recursive: true });
-    } catch (e) { }
+    try { fs.rmSync(sessionsDir, { recursive: true, force: true }); fs.mkdirSync(sessionsDir, { recursive: true }); } catch (e) { }
     connectToWhatsApp();
     res.json({ success: false, error: '🔄 Reiniciando... espera 10s.' });
 };
 
 app.post('/saas/connect', handleConnect);
 app.post('/api/saas/connect', handleConnect);
-
-// Mocks
 app.get('/api/logs', (req, res) => res.json([]));
 app.get('/api/uploads', (req, res) => res.json([]));
-app.get('/health', (req, res) => res.send('OK'));
-
-// SPA Fallback
 app.get('*', (req, res) => {
     if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Not Found' });
     const index = path.join(CLIENT_BUILD_PATH, 'index.html');
@@ -222,9 +221,5 @@ app.get('*', (req, res) => {
     else res.send('Frontend Loading...');
 });
 
-// Boot
 connectToWhatsApp();
-
-server.listen(PORT, () => {
-    console.log(`🚀 Xari Server Running on ${PORT}`);
-});
+server.listen(PORT, () => { console.log(`🚀 TalkMe Tutor Running on ${PORT}`); });
