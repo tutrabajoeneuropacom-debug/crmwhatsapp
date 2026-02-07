@@ -111,19 +111,21 @@ async function connectToWhatsApp() {
                     // AI Reply Logic
                     try {
                         let replyText = '';
-                        if (process.env.OPENAI_API_KEY) {
+
+                        // Check API Key
+                        if (!process.env.OPENAI_API_KEY) {
+                            replyText = `🤖 *Xari (Modo Demo)*: Gracias por escribir. Soy un asistente en entrenamiento.\n\n_Tu mensaje:_ "${text}"`;
+                        } else {
                             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
                             const completion = await openai.chat.completions.create({
                                 model: "gpt-4o",
                                 messages: [
-                                    { role: "system", content: "Eres Xari, el asistente de ventas IA. Responde de forma breve, persuasiva y profesional a los clientes." },
+                                    { role: "system", content: "Eres Xari, el asistente de ventas IA de Xari SaaS. Responde de forma breve, persuasiva y profesional a los clientes." },
                                     { role: "user", content: text }
                                 ],
                                 max_tokens: 150
                             });
                             replyText = completion.choices[0].message.content;
-                        } else {
-                            replyText = `🤖 *Eco*: "${text}"\n_(Configura tu API Key)_`;
                         }
 
                         // Send
@@ -132,8 +134,10 @@ async function connectToWhatsApp() {
                         console.log(`📤 OUTGOING: "${replyText}"`);
 
                     } catch (e) {
-                        console.error('❌ AI ERROR:', e);
-                        await sock.sendMessage(id, { text: '⚠️ Cerebro temporalmente desconectado.' });
+                        console.error('❌ AI ERROR:', e.message);
+                        // Friendly Fallback on Error
+                        const fallback = `🤖 *Xari (Modo Respaldo)*: Lo siento, mi cerebro IA está descansando. \n\nRecibí esto: "${text}"`;
+                        await sock.sendMessage(id, { text: fallback });
                     }
                 }
             }
