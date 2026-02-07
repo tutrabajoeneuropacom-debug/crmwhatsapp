@@ -8,8 +8,8 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
-const OpenAI = require('openai'); // Keep for TTS if available
-const { GoogleGenerativeAI } = require("@google/generative-ai"); // New Brain
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const googleTTS = require('google-tts-api');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,7 +34,7 @@ if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
-    console.log('🔄 Starting TalkMe (Gemini Edition)...');
+    console.log('🔄 Starting TalkMe (Gemini + GoogleTTS)...');
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
 
@@ -42,7 +42,7 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['TalkMe Gemini', 'Chrome', '1.0.0'],
+        browser: ['TalkMe Google', 'Chrome', '1.0.0'],
         syncFullHistory: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: undefined,
@@ -83,7 +83,7 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- TALKME GEMINI TUTOR HANDLER ---
+    // --- GEMINI TUTOR + GOOGLE TTS HANDLER ---
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
@@ -97,12 +97,12 @@ async function connectToWhatsApp() {
 
                     // Gemini Logic
                     try {
-                        let correction = '';
                         let responseText = '';
 
                         // 1. Process Input (Gemini Multimodal)
                         if (process.env.GOOGLE_API_KEY) {
                             const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+                            // Use flash model for speed and cost
                             const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
                             await sock.sendPresenceUpdate('composing', id);
@@ -131,7 +131,7 @@ async function connectToWhatsApp() {
                                     {
                                         inlineData: {
                                             data: buffer.toString('base64'),
-                                            mimeType: "audio/ogg" // Usually supported by Gemini
+                                            mimeType: "audio/ogg" // OGG is standard for WhatsApp voice notes
                                         }
                                     }
                                 ]);
@@ -153,29 +153,36 @@ async function connectToWhatsApp() {
                         // 2. Send Text Correction
                         await sock.sendMessage(id, { text: responseText });
 
-                        // 3. Send Voice (OpenAI TTS if available)
+                        // 3. Send Voice (Google TTS - Free)
                         // Note: Only speak the conversational part (before the bulb)
-                        if (process.env.OPENAI_API_KEY && responseText) {
+                        const spokenText = responseText.split('💡')[0].trim();
+
+                        if (spokenText.length > 0) {
                             try {
-                                const spokenText = responseText.split('💡')[0].trim();
-                                if (spokenText.length > 0) {
-                                    await sock.sendPresenceUpdate('recording', id);
+                                await sock.sendPresenceUpdate('recording', id);
+                                console.log('🗣️ Generating Voice (Google TTS)...');
 
-                                    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-                                    const mp3 = await openai.audio.speech.create({
-                                        model: "tts-1",
-                                        voice: "alloy",
-                                        input: spokenText.substring(0, 4096)
-                                    });
+                                // Get Audio Base64s (splits long text automatically)
+                                const results = await googleTTS.getAllAudioBase64(spokenText, {
+                                    lang: 'en',
+                                    slow: false,
+                                    host: 'https://translate.google.com',
+                                    timeout: 10000,
+                                });
 
-                                    const buffer = Buffer.from(await mp3.arrayBuffer());
+                                // Send audio chunks (usually just 1 for short replies)
+                                for (const item of results) {
+                                    const buffer = Buffer.from(item.base64, 'base64');
                                     await sock.sendMessage(id, {
                                         audio: buffer,
                                         mimetype: 'audio/mp4',
                                         ptt: true
                                     });
+                                    if (results.length > 1) await new Promise(r => setTimeout(r, 500));
                                 }
-                            } catch (ttsError) { console.error('TTS Error (Optional):', ttsError.message); }
+                            } catch (ttsError) {
+                                console.error('Google TTS Error:', ttsError.message);
+                            }
                         }
 
                         await sock.sendPresenceUpdate('paused', id);
@@ -215,4 +222,4 @@ app.get('*', (req, res) => {
 });
 
 connectToWhatsApp();
-server.listen(PORT, () => { console.log(`🚀 TalkMe Gemini Running on ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 TalkMe Google Running on ${PORT}`); });
