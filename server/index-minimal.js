@@ -128,15 +128,41 @@ async function connectToWhatsApp() {
                             replyText = completion.choices[0].message.content;
                         }
 
-                        // Send
+                        // 4. Send Text Reply
                         await sock.sendMessage(id, { text: replyText });
+                        console.log(`📤 Text sent: "${replyText}"`);
+
+                        // 5. Generate & Send Voice Note (TTS)
+                        if (process.env.OPENAI_API_KEY) {
+                            try {
+                                await sock.sendPresenceUpdate('recording', id);
+
+                                const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+                                const mp3 = await openai.audio.speech.create({
+                                    model: "tts-1",
+                                    voice: "alloy", // Voices: alloy, echo, fable, onyx, nova, shimmer
+                                    input: replyText
+                                });
+
+                                const buffer = Buffer.from(await mp3.arrayBuffer());
+
+                                await sock.sendMessage(id, {
+                                    audio: buffer,
+                                    mimetype: 'audio/mp4',
+                                    ptt: true // This makes it look like a recorded voice note
+                                });
+                                console.log(`🗣️ Voice sent!`);
+
+                            } catch (ttsError) {
+                                console.error('❌ TTS Error:', ttsError.message);
+                            }
+                        }
+
                         await sock.sendPresenceUpdate('paused', id);
-                        console.log(`📤 OUTGOING: "${replyText}"`);
 
                     } catch (e) {
                         console.error('❌ AI ERROR:', e.message);
-                        // Friendly Fallback on Error
-                        const fallback = `🤖 *Xari (Modo Respaldo)*: Lo siento, mi cerebro IA está descansando. \n\nRecibí esto: "${text}"`;
+                        const fallback = `🤖 *Xari*: ${text}`;
                         await sock.sendMessage(id, { text: fallback });
                     }
                 }
