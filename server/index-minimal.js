@@ -26,6 +26,10 @@ console.log('🚀 Starting WhatsApp Cloud API Server...');
 
 // WhatsApp Cloud API Service
 const whatsappCloudAPI = require('./services/whatsappCloudAPI');
+// SaaS & QR Service (Simultaneous Support)
+const whatsappSaas = require('./services/whatsappSaas');
+
+app.use('/api/saas', whatsappSaas);
 
 // Initialize Supabase (If configured)
 let supabaseAdmin = null;
