@@ -8,7 +8,8 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
-const OpenAI = require('openai');
+const OpenAI = require('openai'); // Keep for TTS if available
+const { GoogleGenerativeAI } = require("@google/generative-ai"); // New Brain
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -33,7 +34,7 @@ if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
-    console.log('🔄 Starting TalkMe Tutor Connection...');
+    console.log('🔄 Starting TalkMe (Gemini Edition)...');
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
 
@@ -41,7 +42,7 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['TalkMe Tutor', 'Chrome', '1.0.0'],
+        browser: ['TalkMe Gemini', 'Chrome', '1.0.0'],
         syncFullHistory: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: undefined,
@@ -82,7 +83,7 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- TALKME TUTOR MESSAGE HANDLER ---
+    // --- TALKME GEMINI TUTOR HANDLER ---
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
@@ -94,80 +95,72 @@ async function connectToWhatsApp() {
                     // Send Blue Tick
                     await sock.readMessages([msg.key]);
 
-                    // 1. Handle AUDIO (Whisper)
-                    if (audioMsg) {
-                        try {
-                            if (!process.env.OPENAI_API_KEY) throw new Error('No API Key');
-
-                            console.log('🎤 Listening to Audio...');
-                            await sock.sendPresenceUpdate('composing', id); // Show we are processing
-
-                            // Capture Audio Buffer
-                            const buffer = await downloadMediaMessage(
-                                msg,
-                                'buffer',
-                                { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-                            );
-
-                            // Save temp file (Whisper needs file path or compatible stream)
-                            const tempPath = path.join(__dirname, `audio_${Date.now()}.ogg`);
-                            fs.writeFileSync(tempPath, buffer);
-
-                            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-                            const transcription = await openai.audio.transcriptions.create({
-                                file: fs.createReadStream(tempPath),
-                                model: "whisper-1",
-                                language: "en"
-                            });
-                            text = transcription.text;
-                            console.log(`🗣️ Heard: "${text}"`);
-                            fs.unlinkSync(tempPath);
-
-                        } catch (err) {
-                            console.error('Audio Error:', err.message);
-                            await sock.sendMessage(id, { text: '🙉 I couldn\'t hear that properly. Could you write it?' });
-                            continue;
-                        }
-                    }
-
-                    if (!text) continue;
-
-                    // 2. AI Tutor Logic
-                    await sock.sendPresenceUpdate('composing', id);
-                    await new Promise(r => setTimeout(r, 1000));
-
+                    // Gemini Logic
                     try {
-                        let replyText = '';
-                        if (process.env.OPENAI_API_KEY) {
-                            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-                            const completion = await openai.chat.completions.create({
-                                model: "gpt-4o",
-                                messages: [
-                                    { role: "system", content: "You are 'TalkMe', a friendly English Language Tutor. \n1. Respond to the user's message in clear, natural English.\n2. If the user makes a grammar mistake, add a section '💡 Correction:' at the end (explain in Spanish).\n3. Keep responses concise." },
-                                    { role: "user", content: text }
-                                ],
-                                max_tokens: 300
-                            });
-                            replyText = completion.choices[0].message.content;
+                        let correction = '';
+                        let responseText = '';
+
+                        // 1. Process Input (Gemini Multimodal)
+                        if (process.env.GOOGLE_API_KEY) {
+                            const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+                            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+                            await sock.sendPresenceUpdate('composing', id);
+
+                            // Construct Prompt
+                            const systemPrompt = `You are 'TalkMe', a friendly English Language Tutor.
+                            1. Respond to the user's message in clear, natural English conversationally.
+                            2. If the user makes a grammar/flow mistake, add a section '💡 Correction:' at the very end (explain briefly in Spanish).
+                            3. Keep responses concise (under 3 sentences).`;
+
+                            let result;
+
+                            if (audioMsg) {
+                                console.log('🎤 Processing Audio (Gemini)...');
+
+                                // Download Audio
+                                const buffer = await downloadMediaMessage(
+                                    msg,
+                                    'buffer',
+                                    { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                                );
+
+                                // Send Audio + Prompt to Gemini
+                                result = await model.generateContent([
+                                    systemPrompt,
+                                    {
+                                        inlineData: {
+                                            data: buffer.toString('base64'),
+                                            mimeType: "audio/ogg" // Usually supported by Gemini
+                                        }
+                                    }
+                                ]);
+
+                            } else if (text) {
+                                console.log('💬 Processing Text (Gemini)...');
+                                result = await model.generateContent([systemPrompt, text]);
+                            } else {
+                                continue;
+                            }
+
+                            responseText = result.response.text();
+
                         } else {
-                            replyText = `🤖 *TalkMe Demo*: "${text}"`;
+                            // Fallback if no Google Key
+                            responseText = `🤖 *TalkMe Warning*: Please set GOOGLE_API_KEY to activate my brain.`;
                         }
 
-                        // 3. Send Text Correction
-                        await sock.sendMessage(id, { text: replyText });
+                        // 2. Send Text Correction
+                        await sock.sendMessage(id, { text: responseText });
 
-                        // 4. Send Voice (Only the English part)
-                        if (process.env.OPENAI_API_KEY && replyText) {
+                        // 3. Send Voice (OpenAI TTS if available)
+                        // Note: Only speak the conversational part (before the bulb)
+                        if (process.env.OPENAI_API_KEY && responseText) {
                             try {
-                                await sock.sendPresenceUpdate('recording', id);
+                                const spokenText = responseText.split('💡')[0].trim();
+                                if (spokenText.length > 0) {
+                                    await sock.sendPresenceUpdate('recording', id);
 
-                                // Clean text: Remove "Correction:" part so audio is just pure English conversation
-                                let spokenText = replyText;
-                                if (replyText.includes('💡')) {
-                                    spokenText = replyText.split('💡')[0];
-                                }
-
-                                if (spokenText.trim().length > 0) {
                                     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
                                     const mp3 = await openai.audio.speech.create({
                                         model: "tts-1",
@@ -182,21 +175,21 @@ async function connectToWhatsApp() {
                                         ptt: true
                                     });
                                 }
-                            } catch (ttsError) { console.error('TTS Error', ttsError); }
+                            } catch (ttsError) { console.error('TTS Error (Optional):', ttsError.message); }
                         }
 
                         await sock.sendPresenceUpdate('paused', id);
 
                     } catch (e) {
-                        console.error('AI Error:', e);
-                        await sock.sendMessage(id, { text: '⚠️ Brain offline.' });
+                        console.error('Gemini Error:', e);
+                        await sock.sendMessage(id, { text: '⚠️ Brain offline (Check API Keys).' });
                     }
                 }
             }
         }
     });
-
 }
+
 
 // --- API & MOCKS ---
 const handleConnect = async (req, res) => {
@@ -222,4 +215,4 @@ app.get('*', (req, res) => {
 });
 
 connectToWhatsApp();
-server.listen(PORT, () => { console.log(`🚀 TalkMe Tutor Running on ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 TalkMe Gemini Running on ${PORT}`); });
