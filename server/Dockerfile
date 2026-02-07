@@ -1,37 +1,33 @@
-FROM node:20-slim
+# Stage 1: Build the React Client
+FROM node:18-alpine as client-builder
+WORKDIR /app/client
 
-# Set working directory
-WORKDIR /usr/src/app
+# Copy client package files
+COPY ../client/package*.json ./
+RUN npm install
 
-# Install system dependencies (minimal)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    openssl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Copy client source code
+COPY ../client/ .
+RUN npm run build
 
-# Copy package files
-COPY package*.json ./
 
-# Install production dependencies only
-RUN npm ci --only=production
+# Stage 2: Setup the Server
+FROM node:18-alpine
+WORKDIR /app/server
 
-# Copy application code
-COPY . .
+# Copy server package files
+COPY ../server/package*.json ./
+RUN npm install --production
 
-# Create non-root user
-RUN useradd --user-group --create-home --shell /bin/false appuser \
-    && chown -R appuser:appuser /usr/src/app
+# Copy server source code
+COPY ../server/ .
 
-# Switch to non-root user
-USER appuser
+# Copy built frontend assets from Stage 1
+# We put them in specific folder that index-minimal.js expects: ../client/dist
+COPY --from=client-builder /app/client/dist /app/client/dist
 
 # Expose port
 EXPOSE 3000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-
-# Start application
+# Start command
 CMD ["node", "index-minimal.js"]
