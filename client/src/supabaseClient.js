@@ -1,10 +1,12 @@
 import { createClient } from '@supabase/supabase-js'
-import config from './config';
 
-// 1. Intentar usar la configuración directa (Hardcoded)
-// 2. Si no, intentar usar variables de entorno (Fallback)
-const supabaseUrl = config.supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = (config.supabaseKey !== "TU_CLAVE_AQUI") ? config.supabaseKey : import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Fallback config object (empty) to avoid errors if file missing
+const config = { supabaseUrl: null, supabaseKey: "TU_CLAVE_AQUI" };
+
+// 1. Intentar usar variables de entorno (PRIORIDAD)
+// 2. Si no, intentar usar config hardcoded (DESARROLLO LOCAL)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || config.supabaseUrl;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || config.supabaseKey;
 
 // Helper global para depuración en consola del navegador
 if (typeof window !== 'undefined') {
