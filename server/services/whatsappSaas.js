@@ -40,38 +40,75 @@ const BUSINESS_TEMPLATES = {
     - Si preguntan precio: "$19/mes, pero hoy puedes entrar con descuento".`
 };
 
-// --- 🤖 AI LOGIC (SHARED) ---
-async function generateAIResponse(text, config) {
-    const { companyName, businessType, mode, customPrompt } = config;
+// --- AI GENERATION LOGIC (MULTI-PROVIDER) ---
+async function generateAIResponse(message, history, businessType, businessName, customPrompt) {
     try {
-        let systemPrompt;
-
-        if (businessType === 'custom' && customPrompt) {
+        // 1. Select Template & Construct System Prompt
+        const templateFn = BUSINESS_TEMPLATES[businessType] || BUSINESS_TEMPLATES.generic;
+        let systemPrompt = templateFn(businessName);
+        if (customPrompt && customPrompt.trim() !== "") {
             systemPrompt = customPrompt;
-        } else {
-            const templateFn = BUSINESS_TEMPLATES[businessType] || BUSINESS_TEMPLATES.generic;
-            systemPrompt = templateFn(companyName);
         }
 
-        // Adjust prompt based on Audio Mode
-        const modeInstruction = mode === 'voice'
-            ? " Tienes capacidad de voz. Tus respuestas deben ser cortas y conversacionales."
-            : " Responde en texto claro.";
+        const messages = [
+            { role: "system", content: systemPrompt },
+            ...history.map(m => ({ role: m.role, content: m.content })),
+            { role: "user", content: message }
+        ];
 
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                { role: "system", content: systemPrompt + modeInstruction },
-                { role: "user", content: text }
-            ],
-            max_tokens: 250,
-            temperature: 0.7
-        });
+        // 2. Select Provider (Default: OpenAI)
+        // You can make this dynamic per bot in the future
+        const provider = process.env.AI_PROVIDER || 'openai';
 
-        return completion.choices[0].message.content;
-    } catch (err) {
-        console.error('❌ AI Error:', err.message);
-        return "Lo siento, tuve un problema procesando tu mensaje. Intenta de nuevo.";
+        let replyText = "";
+
+        if (provider === 'deepseek') {
+            const deepseekKey = process.env.DEEPSEEK_API_KEY;
+            if (!deepseekKey) throw new Error("DeepSeek API Key missing");
+            const response = await axios.post('https://api.deepseek.com/chat/completions', {
+                model: "deepseek-chat",
+                messages: messages
+            }, { headers: { 'Authorization': `Bearer ${deepseekKey}` } });
+            replyText = response.data.choices[0].message.content;
+
+        } else if (provider === 'google') {
+            const googleKey = process.env.GOOGLE_API_KEY;
+            if (!googleKey) throw new Error("Google API Key missing");
+            // Mapping messages format for Gemini (simplified)
+            const geminiContents = messages.map(m => ({
+                role: m.role === 'user' ? 'user' : 'model',
+                parts: [{ text: m.content }]
+            })).filter(m => m.role !== 'system'); // Gemini handles system prompt differently usually, but for REST simple chat:
+
+            // Note: For full gemini support, better to use @google/generative-ai sdk. 
+            // Using simple axios fallback here or reverting to OpenAI if complex.
+            // For stability in this MVP, we will fallback to OpenAI if Google logic is complex to implement without SDK.
+            // BUT, user asked for it. Let's use a simple OpenAI-compatible endpoint if they provide one, or standard Rest.
+            // Google Gemini generic REST:
+            // https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=...
+
+            const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${googleKey}`, {
+                contents: geminiContents,
+                system_instruction: { parts: [{ text: systemPrompt }] } // Gemini 1.5 Pro/Flash supports this
+            });
+            replyText = response.data.candidates[0].content.parts[0].text;
+
+        } else {
+            // Default: OpenAI
+            const completion = await openai.chat.completions.create({
+                model: "gpt-4o", // Or gpt-3.5-turbo
+                messages: messages,
+                max_tokens: 300,
+                temperature: 0.7,
+            });
+            replyText = completion.choices[0].message.content;
+        }
+
+        return replyText;
+
+    } catch (error) {
+        logger.error({ err: error }, 'Error generating AI response');
+        return "Lo siento, tuve un error procesando tu mensaje. (IA Error)";
     }
 }
 
