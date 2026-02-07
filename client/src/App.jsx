@@ -10,6 +10,7 @@ import WhatsAppConnect from './components/WhatsAppConnect';
 import AdminDashboard from './components/AdminDashboard';
 import OnboardingWizard from './components/Onboarding/OnboardingWizard';
 import PaymentSetup from './components/PaymentSetup';
+import SaasDashboard from './components/SaasDashboard';
 
 
 function App() {
