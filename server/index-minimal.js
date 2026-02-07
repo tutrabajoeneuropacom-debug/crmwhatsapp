@@ -213,6 +213,19 @@ app.post('/whatsapp/restart', (req, res) => {
 
 app.get('/health', (req, res) => res.send('OK'));
 
+// --- DASHBOARD DATA MOCKS ---
+app.get('/api/logs', (req, res) => res.json([]));
+app.get('/api/uploads', (req, res) => res.json([]));
+app.post('/api/saas/connect', (req, res) => res.json({ success: false, error: 'Use manual QR scan' }));
+
+// --- SPA FALLBACK ---
+app.get('*', (req, res) => {
+    if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Endpoint not found' });
+    const index = path.join(CLIENT_BUILD_PATH, 'index.html');
+    if (fs.existsSync(index)) res.sendFile(index);
+    else res.send('Frontend loading... refresh in 30s');
+});
+
 // Start
 connectToWhatsApp();
 
