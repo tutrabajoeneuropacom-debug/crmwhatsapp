@@ -1,8 +1,8 @@
 # 📋 DOCUMENTACIÓN TÉCNICA - BOT DE WHATSAPP
 **Proyecto:** WhatsApp Conversational Core  
-**Versión:** 1.0.1 (Debug Mode Activo)  
-**Fecha de Análisis:** 24 Enero 2026  
-**Estado:** Desplegado en Render (botserver2026.onrender.com)
+**Versión:** 1.1.0 (Producción Activa)  
+**Fecha de Análisis:** 07 Febrero 2026  
+**Estado:** Activo y Operativo (crmwhatsapp-xari.onrender.com)
 
 ---
 
@@ -251,6 +251,10 @@ Settings: { stability: 0.5, similarity_boost: 0.75 }
 1. ❌ Respuestas con voz (ElevenLabs TTS) - Línea 200: `if (false)`
 2. ❌ Modo Debug activo - Código simplificado sin OpenAI (última versión en GitHub)
 
+### 🔴 Servidores Inactivos / Deprecados
+- `https://botserver2026.onrender.com` (Inactivo/Timeout)
+- `https://bot-whatsapp-production.onrender.com` (Desconocido/Inaccesible)
+
 ### ⚠️ Problemas Conocidos
 
 #### 1. **CRÍTICO: Mensajes Entrantes No Llegan**
@@ -375,7 +379,7 @@ Modo Producción:
 
 ### Render (Actual)
 ```
-URL: https://botserver2026.onrender.com
+URL: https://crmwhatsapp-xari.onrender.com
 Región: Frankfurt (EU Central)
 Plan: Free
 Runtime: Node
@@ -450,19 +454,20 @@ Rama: main
 ### Verificar Estado del Sistema
 ```bash
 # Health check
-curl https://botserver2026.onrender.com/api/health
+# Health check
+curl https://crmwhatsapp-xari.onrender.com/api/health
 
 # Estado de WhatsApp
-curl https://botserver2026.onrender.com/api/whatsapp/cloud/status
+curl https://crmwhatsapp-xari.onrender.com/api/whatsapp/cloud/status
 
 # Logs recientes
-curl https://botserver2026.onrender.com/api/logs
+curl https://crmwhatsapp-xari.onrender.com/api/logs
 ```
 
 ### Logs en Render
 ```
 1. Ir a dashboard.render.com
-2. Seleccionar servicio "botserver2026"
+2. Seleccionar servicio "crmwhatsapp-xari" (o similar)
 3. Click en "Logs"
 4. Buscar:
    - "📨 Webhook received" → Mensaje llegó
@@ -479,7 +484,7 @@ node server/test-outgoing-simple.js
 ### Verificar Webhook en Meta
 ```
 1. Meta Developers > WhatsApp > Configuration
-2. Webhook URL debe ser: https://botserver2026.onrender.com/api/webhook/whatsapp
+2. Webhook URL debe ser: https://crmwhatsapp-xari.onrender.com/api/webhook/whatsapp
 3. Verify Token: mi_token_secreto_123
 4. Campos suscritos: messages (✅)
 ```

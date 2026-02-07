@@ -126,6 +126,7 @@ function App() {
           } />
 
           <Route path="/admin" element={<ProtectedRoute><AdminDashboard session={session} /></ProtectedRoute>} />
+          <Route path="/saas" element={<SaasDashboard />} />
           <Route path="/payment-setup" element={<ProtectedRoute><PaymentSetup /></ProtectedRoute>} />
 
           <Route path="/" element={<LandingPage />} />
