@@ -8,100 +8,33 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
-const OpenAI = require('openai'); // Direct import
-const axios = require('axios'); // For DeepSeek/Google
+const OpenAI = require('openai');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- SECURITY & CORS ---
-// For production, this should be restricted. For MVP Deployment today, we allow all to prevent blockers.
-app.use(cors({
-    origin: "*",
-    methods: ["GET", "POST"]
-}));
+app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
 app.use(express.json());
 
-// --- SERVER SETUP ---
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
-});
+const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-// Serve Static Frontend (if needed as fallback)
 const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
-if (fs.existsSync(CLIENT_BUILD_PATH)) {
-    app.use(express.static(CLIENT_BUILD_PATH));
-}
+if (fs.existsSync(CLIENT_BUILD_PATH)) app.use(express.static(CLIENT_BUILD_PATH));
 
-// --- BAILEYS SESSION ---
+// --- GLOBAL STATE ---
 let sock;
-let qrCodeUrl = null;
-let connectionStatus = 'DISCONNECTED';
+global.qrCodeUrl = null;
+global.connectionStatus = 'DISCONNECTED';
+const sessionsDir = path.join(__dirname, 'auth_info_baileys');
 
-// NOTE: On Render, this folder is ephemeral. Authenticated sessions will be lost on redeploy.
-// For persistent production, use PostgreSQL/Supabase Auth State (complex implementation).
-const sessionsDir = 'auth_info_baileys';
-if (!fs.existsSync(sessionsDir)) {
-    fs.mkdirSync(sessionsDir, { recursive: true });
-}
+if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 
-// --- AI PROCESSING (SELF-CONTAINED) ---
-async function generateResponse(text, user) {
-    const provider = process.env.AI_PROVIDER || 'openai';
-    console.log(`🧠 Processing with ${provider}...`);
-
-    try {
-        if (provider === 'deepseek') {
-            const apiKey = process.env.DEEPSEEK_API_KEY;
-            if (!apiKey) throw new Error("Missing DEEPSEEK_API_KEY");
-            const res = await axios.post('https://api.deepseek.com/chat/completions', {
-                model: "deepseek-chat",
-                messages: [
-                    { role: "system", content: "Eres un asistente de ventas experto y amable. Tu objetivo es ayudar al usuario y cerrar ventas." },
-                    { role: "user", content: text }
-                ]
-            }, { headers: { 'Authorization': `Bearer ${apiKey}` } });
-            return res.data.choices[0].message.content;
-        }
-        else if (provider === 'google') {
-            const apiKey = process.env.GOOGLE_API_KEY;
-            if (!apiKey) throw new Error("Missing GOOGLE_API_KEY");
-            // Simple REST fallback
-            const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`, {
-                contents: [{ parts: [{ text }] }]
-            });
-            return res.data.candidates[0].content.parts[0].text;
-        }
-        else {
-            // Default: OpenAI
-            const apiKey = process.env.OPENAI_API_KEY;
-            if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-            const openai = new OpenAI({ apiKey });
-            const completion = await openai.chat.completions.create({
-                model: "gpt-4o",
-                messages: [
-                    { role: "system", content: "Eres Alex, un asistente virtual profesional y empático. Ayuda a los usuarios con sus dudas sobre nuestros servicios." },
-                    { role: "user", content: text }
-                ],
-                max_tokens: 200
-            });
-            return completion.choices[0].message.content;
-        }
-    } catch (err) {
-        console.error(`AI Error (${provider}):`, err.message);
-        return "Lo siento, estoy teniendo problemas para pensar ahora mismo. ¿Puedes intentar de nuevo?";
-    }
-}
-
-// --- WHATSAPP LOGIC ---
 async function connectToWhatsApp() {
-    connectionStatus = 'CONNECTING';
-    io.emit('wa_status', { status: connectionStatus });
-    console.log('🔄 Starting WhatsApp Connection...');
+    global.connectionStatus = 'CONNECTING';
+    io.emit('wa_status', { status: 'CONNECTING' });
+    console.log('🔄 Starting Baileys Connection...');
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
 
@@ -119,10 +52,10 @@ async function connectToWhatsApp() {
 
         if (qr) {
             console.log('✨ QRCode Generated');
-            connectionStatus = 'QR_READY';
+            global.connectionStatus = 'QR_READY';
             QRCode.toDataURL(qr, (err, url) => {
                 if (!err) {
-                    qrCodeUrl = url;
+                    global.qrCodeUrl = url;
                     io.emit('wa_qr', { qr: url });
                     io.emit('wa_status', { status: 'QR_READY' });
                 }
@@ -132,8 +65,8 @@ async function connectToWhatsApp() {
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log(`❌ Connection Closed. Reconnect: ${shouldReconnect}`);
-            connectionStatus = 'DISCONNECTED';
-            qrCodeUrl = null;
+            global.connectionStatus = 'DISCONNECTED';
+            global.qrCodeUrl = null;
             io.emit('wa_status', { status: 'DISCONNECTED' });
 
             if (shouldReconnect) {
@@ -144,104 +77,67 @@ async function connectToWhatsApp() {
                 connectToWhatsApp();
             }
         } else if (connection === 'open') {
-            console.log('✅ WhatsApp Connected Successfully!');
-            connectionStatus = 'READY';
-            qrCodeUrl = null;
+            console.log('✅ WhatsApp Connected!');
+            global.connectionStatus = 'READY';
+            global.qrCodeUrl = null;
             io.emit('wa_status', { status: 'READY' });
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
-
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
-                if (!msg.key.fromMe) await handleMessage(msg);
+                if (!msg.key.fromMe) console.log('Message received');
             }
         }
     });
 }
 
-const handleMessage = async (msg) => {
-    try {
-        const remoteJid = msg.key.remoteJid;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        const name = msg.pushName || 'Usuario';
-
-        if (!text) return;
-
-        console.log(`📩 [${name}] says: ${text}`);
-
-        // Emit to Dashboard
-        io.emit('wa_log', {
-            timestamp: new Date(),
-            from: name,
-            body: text,
-            type: 'incoming'
-        });
-
-        // Generate AI Reply
-        const reply = await generateResponse(text, name);
-
-        // Send Reply
-        await sock.sendMessage(remoteJid, { text: reply });
-        console.log(`📤 Replied: ${reply}`);
-
-        // Emit Reply Log
-        io.emit('wa_log', {
-            timestamp: new Date(),
-            from: 'Bot',
-            body: reply,
-            type: 'outgoing'
-        });
-
-    } catch (err) {
-        console.error('❌ Handle Message Error:', err);
-    }
-};
-
-// --- ROUTES ---
-app.get('/whatsapp/status', (req, res) => res.json({ status: connectionStatus, qr: qrCodeUrl }));
-app.get('/api/whatsapp/status', (req, res) => res.json({ status: connectionStatus, qr: qrCodeUrl })); // Alias
-
-app.post('/whatsapp/restart', (req, res) => {
-    try { sock.end(undefined); } catch (e) { }
-    try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
-    connectToWhatsApp();
-    res.json({ success: true, message: "Restarting..." });
-});
-
-app.get('/health', (req, res) => res.send('OK'));
-
-// --- DASHBOARD API ENDPOINTS ---
-const handleConnect = (req, res) => {
-    // If QR is ready, return it immediately
+// --- DASHBOARD API ENDPOINTS (AGGRESSIVE MODE) ---
+const handleConnect = async (req, res) => {
+    // 1. If QR exists, return it immediately
     if (global.qrCodeUrl) {
         return res.json({
             success: true,
             connection_type: 'QR',
-            qr_code: global.qrCodeUrl, // From Baileys Logic
+            qr_code: global.qrCodeUrl,
             instance_id: 'session_default'
         });
     }
 
-    // If not ready, tell frontend to wait or listen to socket
-    // But for MVP demo, we can just trigger a restart if disconnected
-    if (global.connectionStatus === 'DISCONNECTED') {
-        connectToWhatsApp(); // Trigger connection start
-        return res.json({ success: false, error: 'Iniciando servicio... intenta de nuevo en 5s' });
+    // 2. If already connected, return success
+    if (global.connectionStatus === 'READY') {
+        return res.json({ success: true, message: 'Already Connected!', instance_id: 'session_default' });
     }
 
-    res.json({ success: false, error: 'Esperando QR... revisa la consola o espera 5s' });
+    // 3. FORCE RESTART SESSION
+    console.log('⚡ Dashboard requested QR. Forcing New Session...');
+
+    // Kill existing socket
+    try { if (sock) sock.end(undefined); } catch (e) { }
+
+    // Wipe auth folder to force fresh QR
+    try {
+        fs.rmSync(sessionsDir, { recursive: true, force: true });
+        fs.mkdirSync(sessionsDir, { recursive: true });
+    } catch (e) { }
+
+    // Start New Connection process
+    connectToWhatsApp();
+
+    res.json({ success: false, error: '🔄 Reiniciando WhatsApp... Espera 10s y dale click otra vez.' });
 };
 
-app.post('/saas/connect', handleConnect);      // Route frontend is calling
-app.post('/api/saas/connect', handleConnect);  // Fallback
+app.post('/saas/connect', handleConnect);
+app.post('/api/saas/connect', handleConnect);
 
+// Mocks
 app.get('/api/logs', (req, res) => res.json([]));
 app.get('/api/uploads', (req, res) => res.json([]));
+app.get('/health', (req, res) => res.send('OK'));
 
-// --- SPA FALLBACK ---
+// SPA Fallback
 app.get('*', (req, res) => {
     if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Endpoint not found' });
     const index = path.join(CLIENT_BUILD_PATH, 'index.html');
@@ -249,9 +145,9 @@ app.get('*', (req, res) => {
     else res.send('Frontend loading... refresh in 30s');
 });
 
-// Start
+// Auto-start on boot
 connectToWhatsApp();
 
 server.listen(PORT, () => {
-    console.log(`🚀 Server Running on ${PORT} | AI: ${process.env.AI_PROVIDER || 'OpenAI'}`);
+    console.log(`🚀 AGGRESSIVE Baileys Server Running on ${PORT}`);
 });
