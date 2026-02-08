@@ -29,20 +29,23 @@ global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
 const sessionsDir = path.join(__dirname, 'auth_info_baileys');
 
+// SIMPLE IN-MEMORY HISTORY
+const chatHistory = {}; // { jid: [ { role, content } ] }
+
 if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
-    console.log('🔄 Starting Puentes Globales (Sweet Voice)...');
+    console.log('🔄 Starting Alex Elite (Onyx + Memory)...');
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
 
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true, // Use terminal for QR logging
+        printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['Puentes Sweet', 'Chrome', '1.0.0'],
+        browser: ['Alex Elite', 'Chrome', '1.0.0'],
         syncFullHistory: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: undefined,
@@ -52,7 +55,7 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            console.log('✨ QRCode Generated'); // Log clearly for deployment logs
+            console.log('✨ QRCode Generated');
             global.connectionStatus = 'QR_READY';
             QRCode.toDataURL(qr, (err, url) => {
                 if (!err) {
@@ -83,7 +86,7 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- HANDLER: SWEET VOICE (NOVA) ---
+    // --- ALEX HANDLER (MEMORY + MALE VOICE) ---
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
@@ -94,6 +97,9 @@ async function connectToWhatsApp() {
 
                     // Send Blue Tick
                     await sock.readMessages([msg.key]);
+
+                    // Initialize History
+                    if (!chatHistory[id]) chatHistory[id] = [];
 
                     // 1. Handle AUDIO (Whisper)
                     if (audioMsg) {
@@ -114,22 +120,26 @@ async function connectToWhatsApp() {
                             const transcription = await openai.audio.transcriptions.create({
                                 file: fs.createReadStream(tempPath),
                                 model: "whisper-1",
-                                language: "es" // Optimized for Spanish/Global context
+                                language: "es"
                             });
                             text = transcription.text;
-                            console.log(`🗣️ Heard (Whisper): "${text}"`);
+                            console.log(`🗣️ Heard: "${text}"`);
                             fs.unlinkSync(tempPath);
-
                         } catch (err) {
                             console.error('Whisper Error:', err.message);
-                            await sock.sendMessage(id, { text: '⚠️ No te escuché bien. Intenta de nuevo.' });
+                            await sock.sendMessage(id, { text: '⚠️ No te escuché bien.' });
                             continue;
                         }
                     }
 
                     if (!text) continue;
 
-                    // 2. AI Logic (GPT-4o) - PUENTES GLOBALES PROMPT
+                    // Add User Message to History
+                    chatHistory[id].push({ role: 'user', content: text });
+                    // Keep last 12 messages for good context (increased slightly)
+                    if (chatHistory[id].length > 12) chatHistory[id] = chatHistory[id].slice(-12);
+
+                    // 2. AI Logic (Alex with Memory)
                     try {
                         let responseText = '';
                         await sock.sendPresenceUpdate('composing', id);
@@ -137,86 +147,64 @@ async function connectToWhatsApp() {
                         if (process.env.OPENAI_API_KEY) {
                             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-                            // SYSTEM PROMPT: ALEX (CONSULTATIVE FUNNEL) + TALKME TUTOR
-                            const systemPrompt = `Eres **Alex**, el asesor experto de 'Puentes Globales' 🌍.
-Tu misión no es solo chatear, es **guiar al usuario por el "Embudo de Validación Migratoria"**.
+                            const systemPrompt = `Eres **Alex**, Asesor Senior en 'Puentes Globales' 🌍.
+Tu objetivo es **guiar al usuario** hacia una Consultoría Estratégica con naturalidad.
 
-**TUS 2 MODOS DE OPERACIÓN:**
+**GUION DINÁMICO (ADAPTABLE):**
+1. **Contacto:** Saluda y pregunta si quieren migrar (si no lo has hecho ya).
+2. **Filtro:** Averigua si tienen CV o Score (si no lo sabes).
+3. **Diagnóstico:** Si suben CV o datos, diles amablemente que el mercado Europeo es duro y necesitan mejorar.
+4. **Cierre:** Vende la llamada de Calendly.
 
-🔴 **MODO 1: ALEX (El Asesor de Migración - Español)**
-Sigue este GUION LÓGICO paso a paso. No te saltes etapas.
-
-**Fase 1: El Gancho**
-- Si es el inicio, saluda EXACTAMENTE así: "¡Hola! Soy Alex, tu asesor de migraciones. ¿Estás con ganas de migrar? ✈️"
-
-**Fase 2: El Filtro**
-- Si responden "SÍ" (o similar), pregunta: "Cuéntame, ¿ya hiciste tu CV en nuestra plataforma web?"
-
-**Fase 3: La Bifurcación**
-- **Respuesta "SÍ":** "¡Perfecto! ¿Quieres que te ayude con la evaluación completa de tu perfil ahora mismo?"
-- **Respuesta "NO":** "Entiendo. ¿Te gustaría que empecemos ahora mismo con tu perfil?"
-
-**Fase 4: Recolección y Análisis (El Core)**
-- Tu objetivo aquí es **conseguir su CV (PDF)**. Pídeselo amablemente para "nuestra base de datos y el simulador ATS".
-- Una vez lo tengas/analices, simula ver sus resultados (ATS + Psicométrico).
-- **LA VERDAD:** Sé honesto pero firme. El 90% de los perfiles no pasan el filtro europeo. Encuentra fallos (inglés, formato, palabras clave). Diles que "casi" lo logran, pero hay riesgos.
-
-**Fase 5: El Cierre (Calendly)**
-- Como su perfil tiene riesgos, la única solución segura es una consultoría humana.
-- *"Tu perfil tiene potencial, pero el ATS lo rechazaría por [Razón]. Te sugiero agendar una llamada estratégica con un Senior para arreglarlo."*
-- Comparte el link: **[Link_Calendly]**
-
-🔵 **MODO 2: TALKME (Tutor de Inglés - English)**
-Si el usuario te escribe en **INGLÉS**:
-   - Cambia a "TalkMe Tutor".
-   - Conversa en inglés natural para practicar.
-   - Corrige errores al final con '💡 Correction:'.
-   - *Nota:* El inglés es parte de la evaluación.
-
-**Regla de Voz (Nova):**
-- Tono: Profesional, cálido, pero con autoridad de experto.
-- No leas los emojis ni los símbolos (*).`;
+**REGLAS DE ORO:**
+- **IMPORTANTE:** Revisa el historial de mensajes. ¡NO PREGUNTES LO QUE YA SABES!
+- Si ya te dijeron "Sí", pasa a la siguiente fase.
+- Si ya te dieron el CV, no lo pidas de nuevo, dales el feedback.
+- Voz: Eres HOMBRE (Alex). Tono seguro y profesional.
+- Inglés: Si te hablan en inglés, conviértete en Tutor (TalkMe).
+- **NO REPITAS COMO ROBOT.** Conversa.`;
 
                             const completion = await openai.chat.completions.create({
                                 model: "gpt-4o",
                                 messages: [
                                     { role: "system", content: systemPrompt },
-                                    { role: "user", content: text }
+                                    ...chatHistory[id] // Inject History Context
                                 ],
                                 max_tokens: 350
                             });
                             responseText = completion.choices[0].message.content;
                         } else {
-                            responseText = `🤖 *Puentes Globales AI*: Error de configuración (OPENAI_API_KEY).`;
+                            responseText = `🤖 Error: Missing OpenAI Key.`;
                         }
+
+                        // Add Bot Response to History
+                        chatHistory[id].push({ role: 'assistant', content: responseText });
 
                         // 3. Send Text
                         await sock.sendMessage(id, { text: responseText });
 
-                        // 4. Send Voice (CLEANED & ROBUST)
+                        // 4. Send Voice (ONYX - MALE & AUTHORITATIVE)
                         let textToSpeak = responseText;
 
-                        // A. Logic for English Tutor Mode (Split Correction)
                         if (responseText.includes('Correction:') || responseText.includes('Correction 💡')) {
                             textToSpeak = textToSpeak.split('💡')[0].trim();
                         }
 
-                        // B. Clean Text for TTS (Remove Emojis & Markdown)
-                        // Removes: *, _, and Emoji ranges roughly
+                        // Clean Text (Remove Emojis & Markdown for audio)
                         textToSpeak = textToSpeak
-                            .replace(/[*_]/g, '') // Remove Markdown
-                            .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2700}-\u{27BF}]/gu, ''); // Remove most Emojis
+                            .replace(/[*_]/g, '')
+                            .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2700}-\u{27BF}]/gu, '');
 
                         if (textToSpeak.trim().length > 0) {
                             try {
                                 await sock.sendPresenceUpdate('recording', id);
 
                                 if (process.env.OPENAI_API_KEY) {
-                                    // Primary: OpenAI Nova
+                                    // Primary: OpenAI Onyx (MALE)
                                     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
                                     const mp3 = await openai.audio.speech.create({
                                         model: "tts-1",
-                                        voice: "nova",
+                                        voice: "onyx", // MALE VOICE
                                         input: textToSpeak.substring(0, 4096)
                                     });
                                     const buffer = Buffer.from(await mp3.arrayBuffer());
@@ -232,36 +220,29 @@ Si el usuario te escribe en **INGLÉS**:
                                 }
 
                             } catch (ttsError) {
-                                console.error('TTS Fallback (Google):', ttsError.message);
-
-                                // Fallback: Google TTS
+                                console.error('TTS Error (Google Fallback):', ttsError.message);
                                 try {
-                                    const results = await googleTTS.getAllAudioBase64(textToSpeak, {
-                                        lang: 'es',
-                                        slow: false,
-                                        host: 'https://translate.google.com',
-                                        timeout: 10000
-                                    });
+                                    const results = await googleTTS.getAllAudioBase64(textToSpeak, { lang: 'es', slow: false });
                                     for (const item of results) {
                                         const buffer = Buffer.from(item.base64, 'base64');
                                         await sock.sendMessage(id, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
                                     }
-                                } catch (e) { console.error('Voice completely failed:', e); }
+                                } catch (e) { }
                             }
                         }
 
                         await sock.sendPresenceUpdate('paused', id);
 
                     } catch (e) {
-                        console.error('OpenAI Error:', e);
-                        await sock.sendMessage(id, { text: '⚠️ Cerebro desconectado.' });
+                        console.error('AI Error:', e);
+                        await sock.sendMessage(id, { text: '⚠️ Alex está reiniciando...' });
                     }
                 }
             }
         }
     });
-
 }
+
 
 // --- API & MOCKS ---
 const handleConnect = async (req, res) => {
@@ -280,4 +261,4 @@ app.get('/api/logs', (req, res) => res.json([]));
 app.get('*', (req, res) => { const index = path.join(CLIENT_BUILD_PATH, 'index.html'); if (fs.existsSync(index)) res.sendFile(index); else res.send('Loading...'); });
 
 connectToWhatsApp();
-server.listen(PORT, () => { console.log(`🚀 Puentes Globales (SweetNova) Running on ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 Alex Elite (Onyx) Running on ${PORT}`); });
