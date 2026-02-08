@@ -337,3 +337,15 @@ app.get('*', (req, res) => {
 // START
 connectToWhatsApp();
 server.listen(PORT, () => { console.log(`🚀 Alex v2.0 Live on ${PORT}`); });
+
+// --- ANTI-SLEEP MECHANISM (RENDER FREE TIER FIX) ---
+// Pings the server every 5 minutes to prevent idling and filesystem wipe.
+const PING_INTERVAL = 5 * 60 * 1000; // 5 minutes
+setInterval(() => {
+    http.get(`http://localhost:${PORT}/api/logs`, (res) => {
+        // Just a touch to keep it alive
+        if (global.connectionStatus === 'READY') {
+            console.log('💓 Heartbeat: Keeping Alex Awake...');
+        }
+    }).on('error', (err) => console.error('Ping Error:', err.message));
+}, PING_INTERVAL);
