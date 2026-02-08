@@ -33,17 +33,7 @@ if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 // ==============================================================================
 
 // 1. MOCK DATABASE (Supabase Simulator)
-// Holds the "Truth" about where the user is in the funnel
 const userDatabase = {};
-/* Structure:
-   jid: {
-      name: String,
-      journeyPhase: 0-4, // 0:Exploration, 1:CV_Created, 2:ATS_Simulated, 3:Psychometric, 4:Calendly
-      metrics: { cvScore: null, atsIssues: [] },
-      interactions: [], // Long term memory summary
-      lastAction: timestamp
-   }
-*/
 
 // 2. PERSONALITY ENGINE (Generador de Tono)
 const getDynamicPrompt = (userData, recentHistory) => {
@@ -144,7 +134,6 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (user.chatLog.length > 10) user.chatLog = user.chatLog.slice(-10);
 
     // C. INTELLIGENT ROUTING (Pseudo-Function Calling)
-    // Detect intent keywords to update phase "magically" (Simulating API Webhooks)
     const lowerText = processedText.toLowerCase();
 
     // Heuristics to update state (Cognitive Dots)
@@ -154,9 +143,6 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         user.journeyPhase = 2; // User simulated ATS and failed
     } else if (lowerText.includes('agendar') || lowerText.includes('llamada')) {
         user.journeyPhase = 4; // Wants to book
-    } else if (lowerText.includes('reiniciar') || lowerText.includes('hola')) {
-        // If saying Hello after a long time, maybe check context? 
-        // For now, keep state unless explicit reset.
     }
 
     // D. GENERATE THOUGHT & RESPONSE (GPT-4o)
@@ -165,29 +151,33 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const dynamicSystemPrompt = getDynamicPrompt(user, user.chatLog);
 
-    const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-            { role: "system", content: dynamicSystemPrompt },
-            ...user.chatLog
-        ],
-        max_tokens: 350
-    });
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+                { role: "system", content: dynamicSystemPrompt },
+                ...user.chatLog
+            ],
+            max_tokens: 350
+        });
 
-    const aiResponse = completion.choices[0].message.content;
+        const aiResponse = completion.choices[0].message.content;
 
-    // Update History
-    user.chatLog.push({ role: 'assistant', content: aiResponse });
+        // Update History
+        user.chatLog.push({ role: 'assistant', content: aiResponse });
 
-    return aiResponse;
+        return aiResponse;
+    } catch (e) {
+        console.error('OpenAI Error', e);
+        return "⚠️ Alex está pensando... dame un segundo.";
+    }
 }
 
 // 4. VOICE ENGINE (TTS - Onyx Cleaned)
 async function speakAlex(id, text) {
     if (!text) return;
 
-    // Detect Language Mode (Tutor vs Alex)
-    // Simple heuristic: If text contains "Correction:", likely English mode.
+    // Detect Language Mode
     const isEnglishMode = text.includes('Correction:') || text.includes('Correction 💡');
 
     // Text Cleaning
@@ -315,14 +305,29 @@ async function connectToWhatsApp() {
     });
 }
 
-// --- EXPRESS SERVER ---
+// --- EXPRESS SERVER (UPDATED ENDPOINT) ---
 app.post('/saas/connect', (req, res) => {
-    // Reset Logic
-    try { if (sock) sock.end(undefined); } catch (e) { }
-    try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
+    // 1. If QR is ready, send it immediately
+    if (global.qrCodeUrl) {
+        return res.json({ success: true, connection_type: 'QR', qr_code: global.qrCodeUrl });
+    }
+
+    // 2. If already connected, confirm it
+    if (global.connectionStatus === 'READY') {
+        return res.json({ success: true, message: '✅ Alex Cognitive Engine is Active.' });
+    }
+
+    // 3. If connecting, tell them to wait
+    if (global.connectionStatus === 'CONNECTING') {
+        return res.json({ success: false, error: '⏳ Alex está despertando... espera el QR.' });
+    }
+
+    // 4. Default: Start if not running
     connectToWhatsApp();
-    res.json({ success: false, error: '🔄 Rebooting Alex...' });
+    res.json({ success: false, error: '🔄 Iniciando sistema... espera 10s.' });
 });
+
+app.get('/api/logs', (req, res) => res.json([]));
 app.get('*', (req, res) => {
     if (fs.existsSync(path.join(CLIENT_BUILD_PATH, 'index.html')))
         res.sendFile(path.join(CLIENT_BUILD_PATH, 'index.html'));
