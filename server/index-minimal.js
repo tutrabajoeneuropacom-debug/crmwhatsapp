@@ -182,23 +182,30 @@ Si el usuario te escribe en **INGLÉS**:
                         // 3. Send Text
                         await sock.sendMessage(id, { text: responseText });
 
-                        // 4. Send Voice (OPENAI NOVA - SWEET)
+                        // 4. Send Voice (CLEANED & ROBUST)
                         let textToSpeak = responseText;
-                        // If correction present, only speak the main part (English practice usually)
+
+                        // A. Logic for English Tutor Mode (Split Correction)
                         if (responseText.includes('Correction:') || responseText.includes('Correction 💡')) {
-                            textToSpeak = responseText.split('💡')[0].trim();
+                            textToSpeak = textToSpeak.split('💡')[0].trim();
                         }
 
-                        if (textToSpeak.length > 0) {
+                        // B. Clean Text for TTS (Remove Emojis & Markdown)
+                        // Removes: *, _, and Emoji ranges roughly
+                        textToSpeak = textToSpeak
+                            .replace(/[*_]/g, '') // Remove Markdown
+                            .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2700}-\u{27BF}]/gu, ''); // Remove most Emojis
+
+                        if (textToSpeak.trim().length > 0) {
                             try {
                                 await sock.sendPresenceUpdate('recording', id);
 
                                 if (process.env.OPENAI_API_KEY) {
-                                    console.log('🗣️ Speaking (Nova)...');
+                                    // Primary: OpenAI Nova
                                     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
                                     const mp3 = await openai.audio.speech.create({
                                         model: "tts-1",
-                                        voice: "nova", // SWEET / WARM VOICE
+                                        voice: "nova",
                                         input: textToSpeak.substring(0, 4096)
                                     });
                                     const buffer = Buffer.from(await mp3.arrayBuffer());
@@ -210,20 +217,25 @@ Si el usuario te escribe en **INGLÉS**:
                                     });
 
                                 } else {
-                                    // Fallback to Google (Robotic but works)
                                     throw new Error('No OpenAI Key');
                                 }
 
                             } catch (ttsError) {
-                                console.error('Voice Error:', ttsError.message);
-                                // Fallback
+                                console.error('TTS Fallback (Google):', ttsError.message);
+
+                                // Fallback: Google TTS
                                 try {
-                                    const results = await googleTTS.getAllAudioBase64(textToSpeak, { lang: 'es', slow: false });
+                                    const results = await googleTTS.getAllAudioBase64(textToSpeak, {
+                                        lang: 'es',
+                                        slow: false,
+                                        host: 'https://translate.google.com',
+                                        timeout: 10000
+                                    });
                                     for (const item of results) {
                                         const buffer = Buffer.from(item.base64, 'base64');
                                         await sock.sendMessage(id, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
                                     }
-                                } catch (e) { }
+                                } catch (e) { console.error('Voice completely failed:', e); }
                             }
                         }
 
