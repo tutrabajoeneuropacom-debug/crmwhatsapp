@@ -34,15 +34,15 @@ if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
-    console.log('🔄 Starting TalkMe (OpenAI + GoogleVoice)...');
+    console.log('🔄 Starting Puentes Globales (Sweet Voice)...');
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
 
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true,
+        printQRInTerminal: true, // Use terminal for QR logging
         logger: pino({ level: 'silent' }),
-        browser: ['TalkMe Hybrid', 'Chrome', '1.0.0'],
+        browser: ['Puentes Sweet', 'Chrome', '1.0.0'],
         syncFullHistory: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: undefined,
@@ -52,7 +52,7 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            console.log('✨ QRCode Generated');
+            console.log('✨ QRCode Generated'); // Log clearly for deployment logs
             global.connectionStatus = 'QR_READY';
             QRCode.toDataURL(qr, (err, url) => {
                 if (!err) {
@@ -83,7 +83,7 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- HYBRID HANDLER (OpenAI Brain/Ears + Google Voice) ---
+    // --- HANDLER: SWEET VOICE (NOVA) ---
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
@@ -95,20 +95,18 @@ async function connectToWhatsApp() {
                     // Send Blue Tick
                     await sock.readMessages([msg.key]);
 
-                    // 1. Handle AUDIO (Whisper - OpenAI)
+                    // 1. Handle AUDIO (Whisper)
                     if (audioMsg) {
                         try {
                             if (!process.env.OPENAI_API_KEY) throw new Error('Need OPENAI_API_KEY');
 
                             console.log('🎤 Downloading Audio...');
-                            // Download buffer
                             const buffer = await downloadMediaMessage(
                                 msg,
                                 'buffer',
                                 { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
                             );
 
-                            // Whisper needs a file path
                             const tempPath = path.join(__dirname, `audio_${Date.now()}.ogg`);
                             fs.writeFileSync(tempPath, buffer);
 
@@ -116,7 +114,7 @@ async function connectToWhatsApp() {
                             const transcription = await openai.audio.transcriptions.create({
                                 file: fs.createReadStream(tempPath),
                                 model: "whisper-1",
-                                language: "en"
+                                language: "es" // Optimized for Spanish/Global context
                             });
                             text = transcription.text;
                             console.log(`🗣️ Heard (Whisper): "${text}"`);
@@ -124,62 +122,90 @@ async function connectToWhatsApp() {
 
                         } catch (err) {
                             console.error('Whisper Error:', err.message);
-                            await sock.sendMessage(id, { text: '⚠️ Can\'t hear you properly. Check API Key.' });
+                            await sock.sendMessage(id, { text: '⚠️ No te escuché bien. Intenta de nuevo.' });
                             continue;
                         }
                     }
 
                     if (!text) continue;
 
-                    // 2. AI Logic (GPT-4o)
+                    // 2. AI Logic (GPT-4o) - PUENTES GLOBALES PROMPT
                     try {
                         let responseText = '';
                         await sock.sendPresenceUpdate('composing', id);
 
                         if (process.env.OPENAI_API_KEY) {
                             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+                            // SYSTEM PROMPT: PUENTES GLOBALES (SWEET & PROFESSIONAL)
+                            const systemPrompt = `Eres 'Puentes Globales AI', tu asistente de carrera y migración. 🌍✈️
+
+**Personalidad:** Eres amable, alentadora y profesional. Tu voz (tono) debe ser suave y empática, no robótica.
+
+**Tus Dos Misiones:**
+1. 💼 **Consultora de Carrera (Español):** Asesora sobre emigrar a Europa, buscar trabajo y adaptar el CV. Usa lenguaje positivo ("¡Tú puedes!", "Vamos a lograrlo").
+2. 🎓 **Tutora de Inglés (English):** Si te hablan en inglés, contesta en un inglés natural y amigable para practicar. Corrige errores al final (marcado con '💡 Correction:').
+
+**Regla de Voz:** Escribes pensando en cómo sonarás. Usa frases cortas y naturales.`;
+
                             const completion = await openai.chat.completions.create({
                                 model: "gpt-4o",
                                 messages: [
-                                    { role: "system", content: "You are 'TalkMe', a friendly English Language Tutor.\n1. Respond conversationally in simple, clear American English.\n2. Add '💡 Correction:' at the end if the user makes mistakes (explain in Spanish).\n3. Keep responses concise." },
+                                    { role: "system", content: systemPrompt },
                                     { role: "user", content: text }
                                 ],
-                                max_tokens: 300
+                                max_tokens: 350
                             });
                             responseText = completion.choices[0].message.content;
                         } else {
-                            responseText = `🤖 *TalkMe*: I need a brain (OPENAI_API_KEY).`;
+                            responseText = `🤖 *Puentes Globales AI*: Error de configuración (OPENAI_API_KEY).`;
                         }
 
-                        // 3. Send Text Correction
+                        // 3. Send Text
                         await sock.sendMessage(id, { text: responseText });
 
-                        // 4. Send Voice (Google TTS - Free)
-                        const spokenText = responseText.split('💡')[0].trim();
+                        // 4. Send Voice (OPENAI NOVA - SWEET)
+                        let textToSpeak = responseText;
+                        // If correction present, only speak the main part (English practice usually)
+                        if (responseText.includes('Correction:') || responseText.includes('Correction 💡')) {
+                            textToSpeak = responseText.split('💡')[0].trim();
+                        }
 
-                        if (spokenText.length > 0) {
+                        if (textToSpeak.length > 0) {
                             try {
                                 await sock.sendPresenceUpdate('recording', id);
 
-                                // Get Audio Base64s via Google TTS API
-                                const results = await googleTTS.getAllAudioBase64(spokenText, {
-                                    lang: 'en',
-                                    slow: false,
-                                    host: 'https://translate.google.com',
-                                    timeout: 10000,
-                                });
+                                if (process.env.OPENAI_API_KEY) {
+                                    console.log('🗣️ Speaking (Nova)...');
+                                    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+                                    const mp3 = await openai.audio.speech.create({
+                                        model: "tts-1",
+                                        voice: "nova", // SWEET / WARM VOICE
+                                        input: textToSpeak.substring(0, 4096)
+                                    });
+                                    const buffer = Buffer.from(await mp3.arrayBuffer());
 
-                                for (const item of results) {
-                                    const buffer = Buffer.from(item.base64, 'base64');
                                     await sock.sendMessage(id, {
                                         audio: buffer,
                                         mimetype: 'audio/mp4',
                                         ptt: true
                                     });
-                                    if (results.length > 1) await new Promise(r => setTimeout(r, 500));
+
+                                } else {
+                                    // Fallback to Google (Robotic but works)
+                                    throw new Error('No OpenAI Key');
                                 }
+
                             } catch (ttsError) {
-                                console.error('Google TTS Error:', ttsError.message);
+                                console.error('Voice Error:', ttsError.message);
+                                // Fallback
+                                try {
+                                    const results = await googleTTS.getAllAudioBase64(textToSpeak, { lang: 'es', slow: false });
+                                    for (const item of results) {
+                                        const buffer = Buffer.from(item.base64, 'base64');
+                                        await sock.sendMessage(id, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
+                                    }
+                                } catch (e) { }
                             }
                         }
 
@@ -187,14 +213,14 @@ async function connectToWhatsApp() {
 
                     } catch (e) {
                         console.error('OpenAI Error:', e);
-                        await sock.sendMessage(id, { text: '⚠️ Brain offline.' });
+                        await sock.sendMessage(id, { text: '⚠️ Cerebro desconectado.' });
                     }
                 }
             }
         }
     });
-}
 
+}
 
 // --- API & MOCKS ---
 const handleConnect = async (req, res) => {
@@ -213,4 +239,4 @@ app.get('/api/logs', (req, res) => res.json([]));
 app.get('*', (req, res) => { const index = path.join(CLIENT_BUILD_PATH, 'index.html'); if (fs.existsSync(index)) res.sendFile(index); else res.send('Loading...'); });
 
 connectToWhatsApp();
-server.listen(PORT, () => { console.log(`🚀 TalkMe Hybrid Running on ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 Puentes Globales (SweetNova) Running on ${PORT}`); });
