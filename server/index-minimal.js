@@ -89,7 +89,7 @@ const getDynamicPrompt = (userData, recentHistory) => {
             - El usuario completó el circuito.
             - Objetivo: CERRAR la consultoría humana.
             - Argumento: "Los datos muestran que necesitas estrategia personalizada".
-            - Call to Action: Calendly.`;
+            - Call to Action: Agenda aquí -> https://calendly.com/puentesglobales-iwue`;
             break;
         case 4: // Agendado
             baseSystem += `
