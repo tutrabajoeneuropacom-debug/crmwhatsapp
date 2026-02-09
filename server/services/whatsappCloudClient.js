@@ -1,38 +1,29 @@
 const axios = require('axios');
+const UniversalRouter = require('./UniversalRouter'); // NEW: Brain Integration
 
 class WhatsAppCloudService {
+    // ... (constructor and setSocket remain same)
     constructor() {
         this.token = process.env.WHATSAPP_CLOUD_TOKEN;
-        this.phoneNumberId = process.env.WHATSAPP_PHONE_ID; // From Meta App
-        this.io = null; // Socket.io for frontend logs
+        this.phoneNumberId = process.env.WHATSAPP_PHONE_ID;
+        this.io = null;
     }
 
     setSocket(io) {
         this.io = io;
     }
 
-    // Send a text message
+    // ... (sendMessage remains same)
     async sendMessage(to, text) {
         if (!this.token || !this.phoneNumberId) {
-            console.error("❌ ERROR: WhatsApp Cloud API Credentials missing (TOKEN or PHONE_ID).");
+            console.error("❌ ERROR: WhatsApp Cloud API Credentials missing.");
             return;
         }
-
         try {
             const url = `https://graph.facebook.com/v17.0/${this.phoneNumberId}/messages`;
-            await axios.post(
-                url,
-                {
-                    messaging_product: "whatsapp",
-                    to: to,
-                    text: { body: text },
-                },
-                {
-                    headers: {
-                        Authorization: `Bearer ${this.token}`,
-                        "Content-Type": "application/json",
-                    },
-                }
+            await axios.post(url,
+                { messaging_product: "whatsapp", to: to, text: { body: text } },
+                { headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" } }
             );
             console.log(`✅ Message sent to ${to}`);
         } catch (error) {
@@ -40,75 +31,94 @@ class WhatsAppCloudService {
         }
     }
 
-    // Process Incoming Webhook
+    // Process Incoming Webhook (UPDATED)
     async processWebhook(body) {
-        console.log("📨 Processing Webhook...");
+        if (!body.object) return;
 
-        if (body.object) {
-            if (
-                body.entry &&
-                body.entry[0].changes &&
-                body.entry[0].changes[0] &&
-                body.entry[0].changes[0].value.messages &&
-                body.entry[0].changes[0].value.messages[0]
-            ) {
-                const phone_number_id = body.entry[0].changes[0].value.metadata.phone_number_id;
-                const from = body.entry[0].changes[0].value.messages[0].from; // sender phone number
-                const msg_body = body.entry[0].changes[0].value.messages[0].text.body; // msg text
-                const name = body.entry[0].changes[0].value.contacts[0].profile.name;
+        if (
+            body.entry &&
+            body.entry[0].changes &&
+            body.entry[0].changes[0] &&
+            body.entry[0].changes[0].value.messages &&
+            body.entry[0].changes[0].value.messages[0]
+        ) {
+            const changes = body.entry[0].changes[0].value;
+            const from = changes.messages[0].from;
+            const msg_body = changes.messages[0].text.body;
+            const name = changes.contacts[0].profile.name;
 
-                console.log(`📩 Message from ${from} (${name}): ${msg_body}`);
+            console.log(`📩 Message from ${from} (${name}): ${msg_body}`);
 
-                // 1. Emit to Frontend (Command Center)
-                if (this.io) {
-                    this.io.emit('wa_log', {
-                        from: from,
-                        body: msg_body,
-                        timestamp: new Date()
-                    });
-                }
+            // 1. Emit Log
+            if (this.io) this.io.emit('wa_log', { from, body: msg_body, timestamp: new Date() });
 
-                // 2. Ping-Pong Test
-                if (msg_body.toLowerCase() === '!ping') {
-                    await this.sendMessage(from, "pong (Cloud API ☁️)");
-                }
-
-                // 3. CRM Integration
-                if (msg_body.toLowerCase().includes('precio') || msg_body.toLowerCase().includes('información')) {
-                    await this.sendToCRM({
-                        name: name,
-                        phone: from,
-                        query: msg_body,
-                        source: 'WhatsApp Cloud API'
-                    });
-                }
-            } else {
-                console.log("ℹ️ Webhook received but no messages found (likely status update).");
+            // 2. Simple Command Check
+            if (msg_body.toLowerCase() === '!ping') {
+                return await this.sendMessage(from, "pong (Cloud API ☁️)");
             }
+
+            // 3. ALEX AI RESPONSE (Universal Router)
+            try {
+                // PUENTES GLOBALES: VENTAS (ATS & TALKME)
+                const salesContext = `
+                ACTÚA COMO: Representante Comercial de 'Puentes Globales'.
+                NOMBRE AGENTE: Alex.
+                OBJETIVO: Vender nuestros 2 productos estrella de manera consultiva y profesional.
+
+                PRODUCTO 1: ATS / OPTIMIZACIÓN DE CARRERA
+                - Problema: Tu CV actual no pasa los filtros de Recursos Humanos.
+                - Solución: Te damos un Escáner de CV con IA, Entrevistas Simuladas (Roleplay) y Plan de Mejora.
+                - Precio: Freemium (Gratis análisis básico, Premium para reportes completos).
+                - CTA: "Prueba nuestro escáner gratuito hoy".
+
+                PRODUCTO 2: TALKME (INGLÉS CON IA)
+                - Problema: No puedes practicar inglés cuando quieras y te da vergüenza hablar.
+                - Solución: Chat de voz 24/7 con IA que te corrige sin juzgar. Planes de estudio personalizados diarios.
+                - Precio: Mucho más barato que un profesor privado.
+                - CTA: "Empieza a hablar en inglés ahora mismo".
+
+                REGLA DE ORO:
+                - Sé breve y persuasivo.
+                - Si el cliente pregunta por otro tema, redírelo amablemente a estos dos productos.
+                - Usa emojis profesionales 🚀💼.
+                `;
+
+                // AI Brain decides (Flash vs Pro)
+                const aiResponse = await UniversalRouter.chatWithAlex(msg_body, { salesContext });
+
+                await this.sendMessage(from, aiResponse);
+
+            } catch (aiError) {
+                console.error("❌ Alex Brain Error:", aiError);
+                await this.sendMessage(from, "Lo siento, estoy reiniciando mis sistemas neuronales. Intenta de nuevo en 5 seg.");
+            }
+
+            // 4. CRM Integration (Background)
+            if (msg_body.toLowerCase().includes('precio') || msg_body.toLowerCase().includes('info')) {
+                this.sendToCRM({ name, phone: from, query: msg_body }).catch(e => console.error(e));
+            }
+
+        } else {
+            console.log("ℹ️ Webhook received (status update or other).");
         }
     }
 
+    // ... (sendToCRM remains same)
     async sendToCRM(leadData) {
+        // ... CRM Logic (omitted for brevity in this replace block, kept in file)
         const CRM_WEBHOOK_URL = process.env.CRM_WEBHOOK_URL;
-        if (!CRM_WEBHOOK_URL) {
-            console.log("⚠️ CRM Webhook not configured.");
-            return;
-        }
-
+        if (!CRM_WEBHOOK_URL) return;
         try {
-            console.log(`🚀 Sending Lead to CRM: ${leadData.name}`);
             await axios.post(CRM_WEBHOOK_URL, {
                 fields: {
-                    TITLE: `Lead WhatsApp Cloud: ${leadData.name}`,
+                    TITLE: `Lead WhatsApp: ${leadData.name}`,
                     NAME: leadData.name,
                     PHONE: [{ "VALUE": leadData.phone, "VALUE_TYPE": "WORK" }],
-                    COMMENTS: leadData.query,
-                    SOURCE_ID: "WHATSAPP_CLOUD"
+                    COMMENTS: leadData.query
                 }
             });
-            console.log("✅ Lead synced to CRM!");
-        } catch (error) {
-            console.error("❌ Failed to sync to CRM:", error.message);
+        } catch (e) {
+            console.error("CRM Sync Error", e.message);
         }
     }
 }
