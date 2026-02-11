@@ -77,7 +77,7 @@ class WhatsAppService {
             // CONSENSUS CONFIGURATION
             this.sock = makeWASocket({
                 logger: pino({ level: 'silent' }),
-                printQRInTerminal: false,
+                printQRInTerminal: true,
                 mobile: false,
                 auth: {
                     creds: state.creds,
@@ -194,89 +194,30 @@ class WhatsAppService {
 
                     // SESSION & ROUTING
                     try {
-                        const SessionManager = require('./sessionManager');
-                        const UniversalRouter = require('./UniversalRouter');
+                        const { generateResponse } = require('./aiRouter');
 
-                        const userId = from.replace('@s.whatsapp.net', '');
-                        const session = SessionManager.getSession(userId);
+                        // We are stripping session logic for now as requested.
+                        // This bot is now purely ALEX (Migration Assistant) via Gemini Flash.
 
-                        let replyText = "";
+                        // 1. Send "Typing..." state
+                        await this.sock.sendPresenceUpdate('composing', from);
 
-                        // 1. COMMANDS / MODE SWITCHING
-                        const lowerText = text.toLowerCase().trim();
+                        // 2. Generate Response using Gemini Router
+                        // We pass the conversation context implicitly? 
+                        // For now, let's keep it simple: Single Message Reply or lightweight context if needed.
+                        // Ideally we should fetch history.
+                        // Let's implement a basic history fetch from Baileys store (not implemented here) or just pass current message.
 
-                        if (lowerText === '/alex' || lowerText === 'salir') {
-                            SessionManager.setMode(userId, 'ALEX');
-                            replyText = "👋 Hola, soy Alex. ¿En qué puedo ayudarte hoy?";
-                            await this.sock.sendMessage(from, { text: replyText });
-                            continue;
-                        }
-
-                        if (lowerText === '/roleplay' || lowerText.includes('entrevista')) {
-                            SessionManager.setMode(userId, 'ROLEPLAY');
-                            replyText = "🎭 Modo Entrevista Activado. Envíame tu CV (texto o PDF) o dime el puesto para comenzar.";
-                            await this.sock.sendMessage(from, { text: replyText });
-                            continue;
-                        }
-
-                        if (lowerText === '/talkme' || lowerText.includes('idiomas')) {
-                            SessionManager.setMode(userId, 'TALKME');
-                            replyText = "🗣️ TalkMe Activated! Let's practice English. What topic do you like?";
-                            await this.sock.sendMessage(from, { text: replyText });
-                            continue;
-                        }
-
-                        // 2. ROUTING BASED ON MODE
-                        this.log(`Routing message for ${userId} in mode: ${session.mode}`);
-
-                        if (session.mode === 'ROLEPLAY') {
-                            // Check context
-                            const cvText = session.context.cvText || "Experiencia general en ventas y atención al cliente.";
-                            const job = session.context.job || "Gerente de Ventas";
-
-                            const systemPrompt = `
-                            Eres un Reclutador Senior (Roleplay Mode).
-                            Estás entrevistando a un candidato para el puesto: ${job}.
-                            Su CV (resumen): ${cvText.substring(0, 500)}...
-                            
-                            Instrucciones:
-                            - Mantén el personaje. Sé profesional.
-                            - Haz UNA pregunta a la vez.
-                            - Evalúa la respuesta del usuario y luego haz la siguiente pregunta.
-                            - Si el usuario dice 'feedback', dame una devolución constructiva.
-                            `;
-
-                            replyText = await UniversalRouter.routeRequest('ROLEPLAY', text, systemPrompt);
-
-                        } else if (session.mode === 'TALKME') {
-                            const systemPrompt = `
-                            You are TALKME, a friendly English tutor.
-                            Engage in conversation with the user.
-                            Correct major grammar mistakes gently, but prioritize fluency.
-                            Keep responses short and encouraging.
-                            `;
-                            replyText = await UniversalRouter.routeRequest('TALKME', text, systemPrompt);
-                        } else {
-                            // Default: ALEX (Sales/Support)
-                            const systemPrompt = `
-                            Eres ALEX, el asistente virtual de Career Mastery Engine.
-                            Tu objetivo es ayudar a los usuarios a navegar nuestros servicios:
-                            1. Optimización de CV
-                            2. Simulación de Entrevistas (usa el comando /roleplay)
-                            3. Práctica de Idiomas (usa el comando /talkme)
-                            
-                            Sé breve, amigable y usa emojis.
-                            `;
-                            replyText = await UniversalRouter.routeRequest('ALEX', text, systemPrompt);
-                        }
+                        const replyText = await generateResponse(text, 'ALEX_MIGRATION', []);
 
                         // 3. SEND REPLY
                         await this.sock.sendMessage(from, { text: replyText });
-                        this.log(`REPLIED (${session.mode}): ${replyText.substring(0, 30)}...`);
+
+                        this.log(`REPLIED (ALEX): ${replyText.substring(0, 30)}...`);
 
                     } catch (routerError) {
                         this.log(`Router Error: ${routerError.message}`, 'error');
-                        await this.sock.sendMessage(from, { text: "Lo siento, tuve un error interno. Intenta escribir 'salir' para reiniciar." });
+                        // Optional: don't reply on error to avoid loops
                     }
                 }
             });

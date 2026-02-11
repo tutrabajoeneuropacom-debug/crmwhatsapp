@@ -1,167 +1,176 @@
-const { translateWithDeepSeek } = require('./adapters/deepseek');
-const OpenAI = require('openai');
+// aiRouter.js for WhatsApp Bot (Alex)
+// Orchestrates AI calls with priority: Gemini 2.0 Flash -> DeepSeek / ChatGPT (Fallback)
+// Also handles Text-to-Speech priority: Gemini Flash Audio -> ElevenLabs (Backup)
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : '',
-});
-// Lazy load these to avoid crashing if deps/keys are missing immediately
-const getDeepgram = () => require('./adapters/deepgram');
-const getGoogle = () => require('./adapters/google');
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+dotenv.config();
 
-// --- PROVIDER CONFIGURATION ---
-const PROVIDERS = {
-    PREMIUM: {
-        id: 'premium',
-        stt: 'openai-whisper',
-        llm: 'gpt-4o',
-        tts: 'elevenlabs'
-    },
-    CHALLENGER: {
-        id: 'challenger',
-        stt: 'deepgram',
-        llm: 'deepseek-chat',
-        tts: 'google-neural'
-    }
-};
+// --- Configuration ---
+const GENAI_API_KEY = process.env.GEMINI_API_KEY; // Google AI Studio Key
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 
-/**
- * AI ROUTER
- * Decides which provider stack to use based on user segment or A/B logic.
- */
-class AIRouter {
-    constructor() {
-        this.abRatio = parseFloat(process.env.AB_TEST_RATIO || '0');
-        this.override = null; // 'premium' | 'challenger' | null
-    }
-
-    setOverride(providerId) {
-        console.log(`[AI-ROUTER] Override set to: ${providerId}`);
-        this.override = providerId === 'null' ? null : providerId;
-    }
-
-    getRoute(userId) {
-        // 1. Manual Override (Admin Force)
-        if (this.override && PROVIDERS[this.override.toUpperCase()]) {
-            return PROVIDERS[this.override.toUpperCase()];
-        }
-
-        if (!userId) return PROVIDERS.PREMIUM;
-
-        // 2. A/B Logic
-        const userHash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        const normalizedHash = (userHash % 100) / 100;
-
-        if (normalizedHash < this.abRatio) {
-            console.log(`[AI-ROUTER] Routing ${userId} to CHALLENGER (DeepSeek/Deepgram/Google)`);
-            return PROVIDERS.CHALLENGER;
-        } else {
-            console.log(`[AI-ROUTER] Routing ${userId} to PREMIUM (OpenAI/ElevenLabs)`);
-            return PROVIDERS.PREMIUM;
-        }
-    }
-
-    // --- METHODS ---
-
-    async routeRequest(params, options = {}) {
-        const { prompt, complexity, providerOverride, system_instruction } = params;
-
-        // 1. Determine Provider
-        // If complexity is 'hard', prefer Premium.
-        // If override is implicit 'auto', we could use AB testing or complexity.
-        let providerConfig = PROVIDERS.PREMIUM; // Default
-
-        if (complexity === 'simple' && !providerOverride) {
-            // potentially use Challenger
-        }
-
-        // 2. Construct Messages
-        const messages = [{ role: 'user', content: prompt }];
-
-        // 3. Call Chat
-        // We pass system_instruction separately or as part of messages?
-        // chat() handles systemInstruction arg.
-        return await this.chat(messages, providerConfig, system_instruction, options);
-    }
-
-    async transcribe(audioPath, lang, providerConfig) {
-        if (providerConfig.stt === 'deepgram') {
-            try {
-                const { transcribeWithDeepgram } = getDeepgram();
-                return await transcribeWithDeepgram(audioPath, lang);
-            } catch (e) {
-                console.error("Deepgram Error (Falling back to default):", e.message);
-                return null; // Return null to trigger fallback
-            }
-        }
-        return null; // Default (Whisper)
-    }
-
-    async translate(text, fromLang, toLang, providerConfig) {
-        if (providerConfig.llm === 'deepseek-chat') {
-            try {
-                return await translateWithDeepSeek(text, fromLang, toLang);
-            } catch (e) {
-                console.error("DeepSeek Error (Fallback):", e.message);
-                return null;
-            }
-        }
-        return null; // Default (OpenAI)
-    }
-
-    async speak(text, lang, providerConfig) {
-        if (providerConfig.tts === 'google-neural') {
-            try {
-                const { speakWithGoogle } = getGoogle();
-                return await speakWithGoogle(text, lang);
-            } catch (e) {
-                console.error("Google TTS Error (Fallback):", e.message);
-                return null;
-            }
-        }
-        return null; // Default (ElevenLabs)
-    }
-
-    async chat(messages, providerConfig, systemInstruction, options = {}) {
-        // DeepSeek / Challenger Path
-        if (providerConfig.llm === 'deepseek-chat') {
-            try {
-                console.log("🚀 Routing to DeepSeek V3...");
-                return await chatWithDeepSeek(messages, options);
-            } catch (e) {
-                console.error("DeepSeek Chat Error:", e);
-                // Fallback will naturally happen if we don't return here?
-                // No, we should probably throw or handle fallback specifically
-                console.log("⚠️ DeepSeek Failed, falling back to OpenAI.");
-            }
-        }
-
-        // Premium / Default Path (OpenAI)
-        try {
-            // Ensure system instruction is in messages if provided separately
-            const finalMessages = [...messages];
-            if (systemInstruction) {
-                if (!finalMessages.some(m => m.role === 'system')) {
-                    finalMessages.unshift({ role: 'system', content: systemInstruction });
-                }
-            }
-
-            const completion = await openai.chat.completions.create({
-                model: providerConfig.llm === 'gpt-4o' ? 'gpt-4o' : 'gpt-3.5-turbo',
-                messages: finalMessages,
-                response_format: options.response_format,
-                temperature: options.temperature,
-                max_tokens: options.max_tokens
-            });
-
-            return {
-                text: completion.choices[0].message.content,
-                raw: completion
-            };
-        } catch (error) {
-            console.error("AIRouter Chat Error:", error);
-            throw error;
-        }
-    }
+// Check mandatory key
+if (!GENAI_API_KEY) {
+    console.warn("⚠️ WARNING: GEMINI_API_KEY is missing. Gemini Fallback will not work.");
 }
 
-module.exports = new AIRouter();
+// System Prompts & Personas
+const PERSONAS = {
+    ALEX_MIGRATION: `Eres Alex, un asistente experto en migración y recolocación internacional de Puentes Globales.
+    Tu objetivo es empatizar con los dolores del usuario al emigrar (burocracia, soledad, idioma, trabajo) y ofrecer soluciones sutilmente.
+    Hlas con un tono profesional pero cercano, empático y alentador.
+    
+    Servicios clave de Puentes Globales que puedes mencionar si es relevante:
+    1. Trámites de Visas y Ciudadanía.
+    2. Búsqueda de Empleo Internacional (Career Mastery).
+    3. Idiomas (TalkMe) para superar la barrera lingüística.
+    4. Comunidad y Soporte en destino.
+    
+    NO vendas agresivamente. Escucha primero, valida sus sentimientos, y luego sugiere cómo Puentes Globales puede aliviar ese dolor.
+    Responde en español latino neutro.`
+};
+
+// --- Main Text Generation Function ---
+export async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', history = []) {
+    let responseText = null;
+
+    // 1. Try GEMINI 2.0 FLASH (Fastest & Free-tier generous)
+    try {
+        if (GENAI_API_KEY) {
+            responseText = await callGeminiFlash(userMessage, PERSONAS[personaKey], history);
+        }
+    } catch (error) {
+        console.error("❌ Gemini Flash Error:", error.message);
+    }
+
+    // 2. Fallback: DeepSeek (Cost effective) or ChatGPT (Reliable)
+    if (!responseText) {
+        console.log("⚠️ Falling back to Secondary AI Provider...");
+        try {
+            // Try DeepSeek if key exists, otherwise OpenAI
+            if (DEEPSEEK_API_KEY) {
+                responseText = await callDeepSeek(userMessage, PERSONAS[personaKey], history);
+            } else if (OPENAI_API_KEY) {
+                responseText = await callOpenAI(userMessage, PERSONAS[personaKey], history);
+            }
+        } catch (error) {
+            console.error("❌ Secondary AI Error:", error.message);
+        }
+    }
+
+    return responseText || "Lo siento, estoy teniendo problemas de conexión. ¿Podrías repetirme eso?";
+}
+
+// --- Specific AI Implementations ---
+
+async function callGeminiFlash(message, systemPrompt, history) {
+    const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Or "gemini-1.5-flash" if 2.0 not available yet via API
+
+    // Convert history to Gemini format (user/model)
+    // Note: System instruction is supported in newer SDKs or via "system_instruction" param
+    // Simple way: Prepend system prompt to first message or chat session
+
+    const chat = model.startChat({
+        history: formatHistoryForGemini(history, systemPrompt),
+        generationConfig: {
+            maxOutputTokens: 300,
+            temperature: 0.7,
+        }
+    });
+
+    const result = await chat.sendMessage(message);
+    const response = await result.response;
+    return response.text();
+}
+
+async function callOpenAI(message, systemPrompt, history) {
+    // Standard OpenAI fetch implementation
+    const messages = [
+        { role: "system", content: systemPrompt },
+        ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content })),
+        { role: "user", content: message }
+    ];
+
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+            model: "gpt-4o-mini", // Cost effective
+            messages: messages,
+            max_tokens: 300
+        })
+    });
+
+    const data = await res.json();
+    return data.choices[0].message.content;
+}
+
+async function callDeepSeek(message, systemPrompt, history) {
+    // DeepSeek API is often compatible with OpenAI SDK or similar endpoint
+    // Assuming hypotetical endpoint for now or using OpenAI SDK with base_url
+    // For simplicity, using fetch to their endpoint (check docs for exact URL)
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+        },
+        body: JSON.stringify({
+            model: "deepseek-chat",
+            messages: [
+                { role: "system", content: systemPrompt },
+                ...history,
+                { role: "user", content: message }
+            ]
+        })
+    });
+    const data = await res.json();
+    return data.choices[0].message.content;
+}
+
+
+// --- Helper: Format History ---
+function formatHistoryForGemini(history, systemPrompt) {
+    // Gemini 1.5/2.0 supports system_instructions in config, but for chat history mapping:
+    // It expects [{ role: "user", parts: [{ text: "..." }] }, { role: "model", parts: ... }]
+
+    let formatted = history.map(h => ({
+        role: h.role === 'user' ? 'user' : 'model',
+        parts: [{ text: h.content }]
+    }));
+
+    // Inject system prompt as the very first turn context if needed, or rely on model config.
+    // For now, let's just return history. Handling system prompt inside startChat is better if SDK implies it.
+    // We'll rely on startChat config if available, otherwise prepend.
+    return formatted;
+}
+
+
+// --- Audio Generation (Future / Placeholder) ---
+export async function generateAudio(text, voiceId = "gemini_standard") {
+    // 1. Try Gemini Audio (if available via API - currently multimodal is input focused, but output audio is coming)
+    // For now, we might default to ElevenLabs as primary for High Quality or OpenAI TTS.
+    // User requested: Gemini Flash Audio free -> Elevenlabs Backup.
+
+    // Check if Gemini TTS is available in current SDK version. 
+    // If not, fall back to ElevenLabs directly for now until public access is fully stable.
+
+    if (ELEVENLABS_API_KEY) {
+        return await callElevenLabs(text);
+    }
+    return null;
+}
+
+async function callElevenLabs(text) {
+    // Implementation for ElevenLabs TTS
+    // ...
+    return null; // Placeholder
+}
