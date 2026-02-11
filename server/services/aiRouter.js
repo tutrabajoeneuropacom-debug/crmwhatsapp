@@ -2,9 +2,9 @@
 // Orchestrates AI calls with priority: Gemini 2.0 Flash -> DeepSeek / ChatGPT (Fallback)
 // Also handles Text-to-Speech priority: Gemini Flash Audio -> ElevenLabs (Backup)
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import fetch from 'node-fetch';
-import dotenv from 'dotenv';
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const axios = require('axios');
+const dotenv = require('dotenv');
 dotenv.config();
 
 // --- Configuration ---
@@ -22,7 +22,7 @@ if (!GENAI_API_KEY) {
 const PERSONAS = {
     ALEX_MIGRATION: `Eres Alex, un asistente experto en migración y recolocación internacional de Puentes Globales.
     Tu objetivo es empatizar con los dolores del usuario al emigrar (burocracia, soledad, idioma, trabajo) y ofrecer soluciones sutilmente.
-    Hlas con un tono profesional pero cercano, empático y alentador.
+    Hablas con un tono profesional pero cercano, empático y alentador.
     
     Servicios clave de Puentes Globales que puedes mencionar si es relevante:
     1. Trámites de Visas y Ciudadanía.
@@ -35,10 +35,10 @@ const PERSONAS = {
 };
 
 // --- Main Text Generation Function ---
-export async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', history = []) {
+async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', history = []) {
     let responseText = null;
 
-    // 1. Try GEMINI 2.0 FLASH (Fastest & Free-tier generous)
+    // 1. Try GEMINI 1.5 FLASH (Standard Stability)
     try {
         if (GENAI_API_KEY) {
             responseText = await callGeminiFlash(userMessage, PERSONAS[personaKey], history);
@@ -68,109 +68,134 @@ export async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION
 // --- Specific AI Implementations ---
 
 async function callGeminiFlash(message, systemPrompt, history) {
-    const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Or "gemini-1.5-flash" if 2.0 not available yet via API
+    if (!GENAI_API_KEY) return null;
 
-    // Convert history to Gemini format (user/model)
-    // Note: System instruction is supported in newer SDKs or via "system_instruction" param
-    // Simple way: Prepend system prompt to first message or chat session
+    try {
+        const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt
+        });
 
-    const chat = model.startChat({
-        history: formatHistoryForGemini(history, systemPrompt),
-        generationConfig: {
-            maxOutputTokens: 300,
-            temperature: 0.7,
-        }
-    });
+        const chat = model.startChat({
+            history: formatHistoryForGemini(history),
+            generationConfig: {
+                maxOutputTokens: 300,
+                temperature: 0.7,
+            }
+        });
 
-    const result = await chat.sendMessage(message);
-    const response = await result.response;
-    return response.text();
+        const result = await chat.sendMessage(message);
+        const response = await result.response;
+        return response.text();
+    } catch (err) {
+        console.error("❌ Gemini API Error:", err.message);
+        throw err;
+    }
 }
 
 async function callOpenAI(message, systemPrompt, history) {
-    // Standard OpenAI fetch implementation
     const messages = [
         { role: "system", content: systemPrompt },
         ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content })),
         { role: "user", content: message }
     ];
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: "gpt-4o-mini",
+        messages: messages,
+        max_tokens: 300
+    }, {
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-            model: "gpt-4o-mini", // Cost effective
-            messages: messages,
-            max_tokens: 300
-        })
+        }
     });
 
-    const data = await res.json();
-    return data.choices[0].message.content;
+    return response.data.choices[0].message.content;
 }
 
 async function callDeepSeek(message, systemPrompt, history) {
-    // DeepSeek API is often compatible with OpenAI SDK or similar endpoint
-    // Assuming hypotetical endpoint for now or using OpenAI SDK with base_url
-    // For simplicity, using fetch to their endpoint (check docs for exact URL)
-    const res = await fetch('https://api.deepseek.com/chat/completions', {
-        method: 'POST',
+    const response = await axios.post('https://api.deepseek.com/chat/completions', {
+        model: "deepseek-chat",
+        messages: [
+            { role: "system", content: systemPrompt },
+            ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content })),
+            { role: "user", content: message }
+        ]
+    }, {
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-        },
-        body: JSON.stringify({
-            model: "deepseek-chat",
-            messages: [
-                { role: "system", content: systemPrompt },
-                ...history,
-                { role: "user", content: message }
-            ]
-        })
+        }
     });
-    const data = await res.json();
-    return data.choices[0].message.content;
+    return response.data.choices[0].message.content;
 }
 
-
 // --- Helper: Format History ---
-function formatHistoryForGemini(history, systemPrompt) {
-    // Gemini 1.5/2.0 supports system_instructions in config, but for chat history mapping:
-    // It expects [{ role: "user", parts: [{ text: "..." }] }, { role: "model", parts: ... }]
+function formatHistoryForGemini(history) {
+    if (!history || !Array.isArray(history)) return [];
 
-    let formatted = history.map(h => ({
-        role: h.role === 'user' ? 'user' : 'model',
-        parts: [{ text: h.content }]
-    }));
+    let formatted = [];
+    let lastRole = null;
 
-    // Inject system prompt as the very first turn context if needed, or rely on model config.
-    // For now, let's just return history. Handling system prompt inside startChat is better if SDK implies it.
-    // We'll rely on startChat config if available, otherwise prepend.
+    for (const msg of history) {
+        if (msg.role === 'system') continue;
+        const role = msg.role === 'user' ? 'user' : 'model';
+
+        if (role !== lastRole) {
+            formatted.push({
+                role: role,
+                parts: [{ text: msg.content || "" }]
+            });
+            lastRole = role;
+        }
+    }
+
+    if (formatted.length > 0 && formatted[0].role !== 'user') {
+        formatted.shift();
+    }
+
     return formatted;
 }
 
+/**
+ * Cleans Markdown and special characters for TTS engines.
+ */
+function cleanTextForTTS(text) {
+    if (!text) return "";
+    return text
+        .replace(/[*_~`#]/g, '')
+        .replace(/!\[.*?\]\(.*?\)/g, '')
+        .replace(/\[.*?\]\(.*?\)/g, '')
+        .replace(/\{.*?\}/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
 
-// --- Audio Generation (Future / Placeholder) ---
-export async function generateAudio(text, voiceId = "gemini_standard") {
-    // 1. Try Gemini Audio (if available via API - currently multimodal is input focused, but output audio is coming)
-    // For now, we might default to ElevenLabs as primary for High Quality or OpenAI TTS.
-    // User requested: Gemini Flash Audio free -> Elevenlabs Backup.
+// --- Audio Generation (Google TTS - Free) ---
+async function generateAudio(text, voiceId = "gemini_standard") {
+    try {
+        const googleTTS = require('google-tts-api');
+        const ttsUrl = googleTTS.getAudioUrl(text, {
+            lang: 'en',
+            slow: false,
+            host: 'https://translate.google.com'
+        });
 
-    // Check if Gemini TTS is available in current SDK version. 
-    // If not, fall back to ElevenLabs directly for now until public access is fully stable.
-
-    if (ELEVENLABS_API_KEY) {
-        return await callElevenLabs(text);
+        const axios = require('axios');
+        const response = await axios.get(ttsUrl, { responseType: 'arraybuffer' });
+        return Buffer.from(response.data);
+    } catch (err) {
+        console.error('[ERROR] Google TTS Failed:', err.message);
+        return null;
     }
-    return null;
 }
 
-async function callElevenLabs(text) {
-    // Implementation for ElevenLabs TTS
-    // ...
-    return null; // Placeholder
-}
+module.exports = {
+    generateResponse,
+    generateAudio,
+    cleanTextForTTS
+};
+
+
