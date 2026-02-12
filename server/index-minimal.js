@@ -5,11 +5,19 @@ const http = require('http');
 const { Server } = require("socket.io");
 const { makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 const pino = require('pino');
 const OpenAI = require('openai');
 const googleTTS = require('google-tts-api');
+const { createClient } = require('@supabase/supabase-js');
+const useSupabaseAuthState = require('./services/supabaseAuthState');
+const { generateResponse, cleanTextForTTS } = require('./services/aiRouter');
+
+// --- SUPABASE SETUP ---
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 // --- SERVER SETUP ---
 const app = express();
@@ -145,30 +153,18 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         user.journeyPhase = 4; // Wants to book
     }
 
-    // D. GENERATE THOUGHT & RESPONSE (GPT-4o)
-    if (!process.env.OPENAI_API_KEY) return "⚠️ Error: Cerebro desconectado (API Key).";
-
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    // D. GENERATE RESPONSE (Unified aiRouter)
     const dynamicSystemPrompt = getDynamicPrompt(user, user.chatLog);
 
     try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                { role: "system", content: dynamicSystemPrompt },
-                ...user.chatLog
-            ],
-            max_tokens: 350
-        });
-
-        const aiResponse = completion.choices[0].message.content;
+        const aiResponse = await generateResponse(processedText, dynamicSystemPrompt, user.chatLog);
 
         // Update History
         user.chatLog.push({ role: 'assistant', content: aiResponse });
 
         return aiResponse;
     } catch (e) {
-        console.error('OpenAI Error', e);
+        console.error('Brain Error (aiRouter):', e);
         return "⚠️ Alex está pensando... dame un segundo.";
     }
 }
@@ -225,7 +221,16 @@ async function connectToWhatsApp() {
     io.emit('wa_status', { status: 'CONNECTING' });
     console.log('🧠 Starting Alex v2.0 Cognitive Engine...');
 
-    const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
+    // 1. SESSION MANAGEMENT (SUPABASE PERSISTENCE)
+    let authState;
+    if (supabase) {
+        console.log('🔗 Using Supabase for persistent session storage.');
+        authState = await useSupabaseAuthState(supabase);
+    } else {
+        console.warn('⚠️ No Supabase credentials. Using local file storage (volatile).');
+        authState = await useMultiFileAuthState(sessionsDir);
+    }
+    const { state, saveCreds } = authState;
 
     sock = makeWASocket({
         auth: state,
@@ -246,9 +251,18 @@ async function connectToWhatsApp() {
             });
         }
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) setTimeout(connectToWhatsApp, 2000);
-            else {
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`📡 WhatsApp closed! Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+
+            if (statusCode === 405) {
+                console.error('🛑 ERROR 405 (Corrupted Session). Wiping and restarting...');
+                try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
+                connectToWhatsApp();
+            } else if (shouldReconnect) {
+                setTimeout(connectToWhatsApp, 5000); // 5s to avoid CPU spikes
+            } else {
+                console.error('❌ Logged out. Manual scan required.');
                 try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
                 connectToWhatsApp();
             }

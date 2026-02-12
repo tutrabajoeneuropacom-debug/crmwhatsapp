@@ -7,8 +7,10 @@
     "node": ">=16.0.0"
   },
   "scripts": {
-    "start": "node index-baileys.js",
-    "dev": "nodemon index-baileys.js",
+    "start": "node index-minimal.js",
+    "alex": "node index-minimal.js",
+    "baileys": "node index-baileys.js",
+    "dev": "nodemon index-minimal.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [

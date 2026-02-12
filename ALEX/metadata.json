@@ -1,0 +1,8 @@
+
+{
+  "name": "Alex - Career Architect & Migration Expert",
+  "description": "A high-fidelity AI companion for migrants, providing career guidance and emotional support through text and voice interactions powered by Gemini.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
