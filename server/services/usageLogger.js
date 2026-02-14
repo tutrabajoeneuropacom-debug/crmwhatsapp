@@ -1,8 +1,16 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use Service Role for admin writes
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+let supabase = null;
+if (supabaseUrl && supabaseKey) {
+    try {
+        supabase = createClient(supabaseUrl, supabaseKey);
+    } catch (e) {
+        console.warn("⚠️ Failed to initialize Supabase client:", e.message);
+    }
+}
 
 // Pricing Constants (Approximate USD) can be moved to DB
 const PRICING = {
@@ -26,6 +34,7 @@ const UsageLogger = {
         isCacheHit,
         isChallenger
     }) {
+        if (!supabase) return;
         try {
             // 1. Calculate Estimated Cost
             let cost = 0;

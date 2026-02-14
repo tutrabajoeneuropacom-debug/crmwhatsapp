@@ -1,22 +1,19 @@
-// aiRouter.js for WhatsApp Bot (Alex)
-// Orchestrates AI calls with priority: Gemini 2.0 Flash -> DeepSeek / ChatGPT (Fallback)
-// Also handles Text-to-Speech priority: Gemini Flash Audio -> ElevenLabs (Backup)
-
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require('axios');
-const dotenv = require('dotenv');
-dotenv.config();
+require('dotenv').config();
 
-// --- Configuration ---
-const GENAI_API_KEY = process.env.GEMINI_API_KEY; // Google AI Studio Key
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+// --- Robust Key Cleaning ---
+const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g, '');
 
-// Check mandatory key
-if (!GENAI_API_KEY) {
-    console.warn("⚠️ WARNING: GEMINI_API_KEY is missing. Gemini Fallback will not work.");
-}
+const GENAI_API_KEY = cleanKey(process.env.GEMINI_API_KEY);
+const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
+const DEEPSEEK_API_KEY = cleanKey(process.env.DEEPSEEK_API_KEY);
+const ELEVENLABS_API_KEY = cleanKey(process.env.ELEVENLABS_API_KEY);
+
+// Diagnostic Log
+console.log("🔍 [aiRouter] API Status:");
+console.log(`- Gemini: ${GENAI_API_KEY ? 'Present' : 'Missing'}`);
+console.log(`- OpenAI: ${OPENAI_API_KEY ? 'Present' : 'Missing'}`);
 
 // System Prompts & Personas
 const PERSONAS = {
@@ -37,32 +34,38 @@ const PERSONAS = {
 // --- Main Text Generation Function ---
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', history = []) {
     let responseText = null;
+    const systemPrompt = PERSONAS[personaKey] || personaKey;
 
-    // 1. Try GEMINI 1.5 FLASH (Standard Stability)
-    try {
-        if (GENAI_API_KEY) {
-            responseText = await callGeminiFlash(userMessage, PERSONAS[personaKey], history);
-        }
-    } catch (error) {
-        console.error("❌ Gemini Flash Error:", error.message);
-    }
-
-    // 2. Fallback: DeepSeek (Cost effective) or ChatGPT (Reliable)
-    if (!responseText) {
-        console.log("⚠️ Falling back to Secondary AI Provider...");
+    // 1. Try GEMINI 1.5 FLASH (Fast but fails if key is bad)
+    if (GENAI_API_KEY && !GENAI_API_KEY.includes('AIzaSyBmMz50s-MqC9UhEHnwXILWAAFR5tG0Cq4')) { // Skip known bad key
         try {
-            // Try DeepSeek if key exists, otherwise OpenAI
-            if (DEEPSEEK_API_KEY) {
-                responseText = await callDeepSeek(userMessage, PERSONAS[personaKey], history);
-            } else if (OPENAI_API_KEY) {
-                responseText = await callOpenAI(userMessage, PERSONAS[personaKey], history);
-            }
+            console.log("🤖 [aiRouter] Attempting Gemini...");
+            responseText = await callGeminiFlash(userMessage, systemPrompt, history);
         } catch (error) {
-            console.error("❌ Secondary AI Error:", error.message);
+            console.warn("⚠️ Gemini failed, jumping to fallbacks.");
         }
     }
 
-    return responseText || "Lo siento, estoy teniendo problemas de conexión. ¿Podrías repetirme eso?";
+    // 2. Fallback: OpenAI (Reliable) -> DeepSeek
+    if (!responseText) {
+        if (OPENAI_API_KEY) {
+            try {
+                console.log("🤖 [aiRouter] Fallback: OpenAI...");
+                responseText = await callOpenAI(userMessage, systemPrompt, history);
+            } catch (error) {
+                console.error("❌ OpenAI Fallback Error:", error.message);
+            }
+        }
+
+        if (!responseText && DEEPSEEK_API_KEY) {
+            try {
+                console.log("🤖 [aiRouter] Fallback: DeepSeek...");
+                responseText = await callDeepSeek(userMessage, systemPrompt, history);
+            } catch (error) { }
+        }
+    }
+
+    return responseText || "Lo siento, tuve un problema técnico. ¿Podrías repetirlo?";
 }
 
 // --- Specific AI Implementations ---
@@ -109,7 +112,8 @@ async function callOpenAI(message, systemPrompt, history) {
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${OPENAI_API_KEY}`
-        }
+        },
+        timeout: 15000 // 15s timeout
     });
 
     return response.data.choices[0].message.content;
@@ -127,7 +131,8 @@ async function callDeepSeek(message, systemPrompt, history) {
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-        }
+        },
+        timeout: 15000 // 15s timeout
     });
     return response.data.choices[0].message.content;
 }
@@ -173,21 +178,48 @@ function cleanTextForTTS(text) {
         .trim();
 }
 
-// --- Audio Generation (Google TTS - Free) ---
-async function generateAudio(text, voiceId = "gemini_standard") {
+// --- Audio Generation (ElevenLabs Primary -> Google TTS Fallback) ---
+async function generateAudio(text, voiceId = "21m00Tcm4TlvDq8ikWAM") { // Rachel by default
+    // 1. Try ElevenLabs
+    if (ELEVENLABS_API_KEY) {
+        try {
+            console.log("🔊 [aiRouter] Attempting ElevenLabs TTS...");
+            const response = await axios.post(
+                `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+                {
+                    text: text,
+                    model_id: "eleven_multilingual_v2",
+                    voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+                },
+                {
+                    headers: {
+                        'xi-api-key': ELEVENLABS_API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    responseType: 'arraybuffer',
+                    timeout: 10000
+                }
+            );
+            return Buffer.from(response.data);
+        } catch (err) {
+            console.warn("⚠️ ElevenLabs TTS failed:", err.message);
+        }
+    }
+
+    // 2. Fallback to Google TTS (Free)
     try {
+        console.log("🔊 [aiRouter] Fallback: Google TTS...");
         const googleTTS = require('google-tts-api');
         const ttsUrl = googleTTS.getAudioUrl(text, {
-            lang: 'en',
+            lang: 'es',
             slow: false,
             host: 'https://translate.google.com'
         });
 
-        const axios = require('axios');
-        const response = await axios.get(ttsUrl, { responseType: 'arraybuffer' });
+        const response = await axios.get(ttsUrl, { responseType: 'arraybuffer', timeout: 5000 });
         return Buffer.from(response.data);
     } catch (err) {
-        console.error('[ERROR] Google TTS Failed:', err.message);
+        console.error('❌ Audio Generation Failed:', err.message);
         return null;
     }
 }
