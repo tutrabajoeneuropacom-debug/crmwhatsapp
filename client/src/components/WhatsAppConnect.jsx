@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import io from 'socket.io-client';
 import api from '../services/api';
+import { motion } from 'framer-motion';
+import { QrCode, Cloud, Activity } from 'lucide-react';
 
 const getSocketUrl = () => {
     if (import.meta.env.PROD) {
