@@ -11,7 +11,8 @@ const pino = require('pino');
 const OpenAI = require('openai');
 const googleTTS = require('google-tts-api');
 const { createClient } = require('@supabase/supabase-js');
-const useSupabaseAuthState = require('./services/supabaseAuthState');
+// --- SERVICES ---
+const whatsappCloudAPI = require('./services/whatsappCloudAPI');
 const { generateResponse, cleanTextForTTS } = require('./services/aiRouter');
 
 // --- SUPABASE SETUP ---
@@ -28,6 +29,35 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
 if (fs.existsSync(CLIENT_BUILD_PATH)) app.use(express.static(CLIENT_BUILD_PATH));
+
+// --- WHATSAPP CLOUD API ROUTES (OFFICIAL META) ---
+app.get('/api/webhook/whatsapp', (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    const result = whatsappCloudAPI.verifyWebhook(mode, token, challenge);
+    if (result) res.status(200).send(result);
+    else res.sendStatus(403);
+});
+
+app.post('/api/webhook/whatsapp', async (req, res) => {
+    try {
+        const messageData = await whatsappCloudAPI.processWebhook(req.body);
+        if (messageData && messageData.text) {
+            const { from, text } = messageData;
+            const replyText = await generateResponse(text, 'ALEX_MIGRATION', []);
+            await whatsappCloudAPI.sendMessage(from, replyText);
+        }
+        res.sendStatus(200);
+    } catch (e) {
+        console.error("Cloud API Error:", e.message);
+        res.sendStatus(500);
+    }
+});
+
+app.get('/api/whatsapp/cloud/status', (req, res) => {
+    res.json(whatsappCloudAPI.getStatus());
+});
 
 // --- GLOBAL BAILEYS STATE ---
 let sock;
