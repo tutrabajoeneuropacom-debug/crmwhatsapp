@@ -371,6 +371,27 @@ app.post('/saas/connect', (req, res) => {
     res.json({ success: false, error: '🔄 Iniciando sistema... espera 10s.' });
 });
 
+app.get('/whatsapp/status', (req, res) => {
+    res.json({
+        status: global.connectionStatus,
+        qr: global.qrCodeUrl
+    });
+});
+
+app.post('/whatsapp/restart', async (req, res) => {
+    console.log('🔄 Restarting WhatsApp connection as requested...');
+    global.connectionStatus = 'DISCONNECTED';
+    global.qrCodeUrl = null;
+    try {
+        if (sock) sock.end(undefined);
+        if (fs.existsSync(sessionsDir)) {
+            fs.rmSync(sessionsDir, { recursive: true, force: true });
+        }
+    } catch (e) { }
+    connectToWhatsApp();
+    res.json({ success: true, message: 'Restarting...' });
+});
+
 app.get('/api/logs', (req, res) => res.json([]));
 app.get('*', (req, res) => {
     if (fs.existsSync(path.join(CLIENT_BUILD_PATH, 'index.html')))
