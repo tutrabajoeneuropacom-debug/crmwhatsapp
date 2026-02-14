@@ -3,7 +3,14 @@ import { QRCodeSVG } from 'qrcode.react';
 import io from 'socket.io-client';
 import api from '../services/api';
 
-const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3000');
+const getSocketUrl = () => {
+    if (import.meta.env.PROD) {
+        return window.location.origin;
+    }
+    return 'http://localhost:3000';
+};
+
+const socket = io(getSocketUrl());
 
 const WhatsAppConnect = () => {
     const [qrCode, setQrCode] = useState(null);

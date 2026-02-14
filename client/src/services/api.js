@@ -3,7 +3,10 @@ import axios from 'axios';
 const getBaseUrl = () => {
     // Correct Backend URL for WhatsApp CRM
     if (import.meta.env.PROD) {
-        return import.meta.env.VITE_API_URL || 'https://crmwhatsapp-xari.onrender.com';
+        if (typeof window !== 'undefined') {
+            return window.location.origin;
+        }
+        return import.meta.env.VITE_API_URL || 'https://crmwhatsapp-1-ggpi.onrender.com';
     }
 
     // Localhost fallback
