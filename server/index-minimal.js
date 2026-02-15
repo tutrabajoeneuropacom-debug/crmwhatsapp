@@ -25,10 +25,25 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
 app.use(express.json());
+
+// --- HEALTH CHECK (CRITICAL FOR RENDER) ---
+app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
-const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
-if (fs.existsSync(CLIENT_BUILD_PATH)) app.use(express.static(CLIENT_BUILD_PATH));
+
+// --- STATIC ASSETS ---
+const CLIENT_BUILD_PATH = path.resolve(__dirname, '../client/dist');
+console.log(`📂 Client Build Path: ${CLIENT_BUILD_PATH}`);
+console.log(`🔎 Path Exists?: ${fs.existsSync(CLIENT_BUILD_PATH)}`);
+
+if (fs.existsSync(CLIENT_BUILD_PATH)) {
+    console.log("✅ Serving Static Frontend from client/dist");
+    app.use(express.static(CLIENT_BUILD_PATH));
+} else {
+    console.error("❌ client/dist NOT FOUND! Look at Dockerfile or Build Logs.");
+}
 
 // --- WHATSAPP CLOUD API ROUTES (OFFICIAL META) ---
 app.get('/api/webhook/whatsapp', (req, res) => {

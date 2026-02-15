@@ -143,6 +143,9 @@ function App() {
           <Route path="/payment-setup" element={<ProtectedRoute><PaymentSetup /></ProtectedRoute>} />
 
           <Route path="/" element={<LandingPage />} />
+
+          {/* Catch-all Redirect */}
+          <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>
     </Router>
