@@ -165,18 +165,39 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     }
     const user = userDatabase[userId];
 
-    // Handle Persona Switching via Command
+    // --- HEURISTIC: PERSONALITY SWITCHING & COMMANDS ---
     if (userText && (userText.startsWith('!') || userText.startsWith('/'))) {
         const cmd = userText.toLowerCase().trim();
-        if (cmd.includes('marketing')) {
-            global.currentPersona = 'ALEX_MARKETING';
-            return "✅ Modo **Marketing** activado. ¿Qué campaña analizamos?";
-        } else if (cmd.includes('closer')) {
-            global.currentPersona = 'ALEX_CLOSER';
-            return "✅ Modo **Closer** activado. Estoy listo para cerrar esa venta.";
-        } else if (cmd.includes('migra')) {
-            global.currentPersona = 'ALEX_MIGRATION';
-            return "✅ Modo **Migraciones** activado. ¿Qué duda legal tienes?";
+
+        // 1. List Personalities
+        if (cmd.includes('personalidades') || cmd.includes('help') || cmd.includes('ayuda')) {
+            let list = "🤖 *Personalidades de Alex v2.0 disponibles:*\n\n";
+            Object.values(personas).forEach(p => {
+                list += `${p.emoji} *${p.name}*: ${p.role}\n`;
+            });
+            list += "\n💡 Usa comandos como `!marketing`, `!closer` o `!migraciones` para cambiar.";
+            return list;
+        }
+
+        // 2. Switch Personality
+        for (const [key, p] of Object.entries(personas)) {
+            const shortName = key.replace('ALEX_', '').toLowerCase();
+            if (cmd.includes(shortName)) {
+                global.currentPersona = key;
+                return `✅ *Modo ${p.name}* activado ${p.emoji}\n_${p.role}_`;
+            }
+        }
+    }
+
+    // --- HEURISTIC: AUTO-DETECT TOPIC ---
+    if (userText) {
+        const { detectPersonalityFromMessage } = require('./services/aiRouter');
+        const detected = detectPersonalityFromMessage(userText);
+        if (detected && detected !== global.currentPersona) {
+            console.log(`🎯 [ALEX] Auto-detected topic: ${detected}`);
+            // We don't force switch yet to avoid confusing the user, 
+            // but we could use it to influence the next response if we wanted.
+            // For now, let's just use it to suggest a switch or just log it.
         }
     }
 

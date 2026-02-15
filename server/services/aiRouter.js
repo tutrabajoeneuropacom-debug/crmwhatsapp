@@ -12,6 +12,22 @@ const ELEVENLABS_API_KEY = cleanKey(process.env.ELEVENLABS_API_KEY);
 
 const personas = require('../config/personas');
 
+/**
+ * Automagically detects if the user is asking about a specific topic 
+ * that matches a persona's keywords.
+ */
+function detectPersonalityFromMessage(message) {
+    if (!message) return null;
+    const messageLC = message.toLowerCase();
+
+    for (const [key, persona] of Object.entries(personas)) {
+        if (persona.keywords && persona.keywords.some(keyword => messageLC.includes(keyword))) {
+            return key;
+        }
+    }
+    return null;
+}
+
 // --- Main Text Generation Function ---
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', history = []) {
     let responseText = null;
@@ -20,13 +36,17 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
     const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
     const systemPrompt = currentPersona.systemPrompt;
 
-    console.log(`🧠 [aiRouter] Using Persona: ${currentPersona.name}`);
+    // Config values from persona
+    const temperature = currentPersona.temperature || 0.7;
+    const maxTokens = currentPersona.maxTokens || 300;
+
+    console.log(`🧠 [aiRouter] Persona: ${currentPersona.name} (${personaKey})`);
 
     // 1. Try GEMINI 1.5 FLASH (Prioritize speed)
     if (GENAI_API_KEY && !GENAI_API_KEY.includes('AIzaSyBmMz50s-MqC9UhEHnwXILWAAFR5tG0Cq4')) {
         try {
             console.log("🤖 [aiRouter] Attempting Gemini...");
-            responseText = await callGeminiFlash(userMessage, systemPrompt, history);
+            responseText = await callGeminiFlash(userMessage, systemPrompt, history, { temperature, maxTokens });
         } catch (error) {
             console.warn("⚠️ Gemini failed, jumping to fallbacks.");
         }
@@ -37,7 +57,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
         if (OPENAI_API_KEY) {
             try {
                 console.log("🤖 [aiRouter] Fallback: OpenAI...");
-                responseText = await callOpenAI(userMessage, systemPrompt, history);
+                responseText = await callOpenAI(userMessage, systemPrompt, history, { temperature, maxTokens });
             } catch (error) {
                 console.error("❌ OpenAI Fallback Error:", error.message);
             }
@@ -46,7 +66,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
         if (!responseText && DEEPSEEK_API_KEY) {
             try {
                 console.log("🤖 [aiRouter] Fallback: DeepSeek...");
-                responseText = await callDeepSeek(userMessage, systemPrompt, history);
+                responseText = await callDeepSeek(userMessage, systemPrompt, history, { temperature, maxTokens });
             } catch (error) { }
         }
     }
@@ -56,7 +76,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
 
 // --- Specific AI Implementations ---
 
-async function callGeminiFlash(message, systemPrompt, history) {
+async function callGeminiFlash(message, systemPrompt, history, options = {}) {
     if (!GENAI_API_KEY) return null;
 
     try {
@@ -69,8 +89,8 @@ async function callGeminiFlash(message, systemPrompt, history) {
         const chat = model.startChat({
             history: formatHistoryForGemini(history),
             generationConfig: {
-                maxOutputTokens: 300,
-                temperature: 0.7,
+                maxOutputTokens: options.maxTokens || 300,
+                temperature: options.temperature || 0.7,
             }
         });
 
@@ -83,7 +103,7 @@ async function callGeminiFlash(message, systemPrompt, history) {
     }
 }
 
-async function callOpenAI(message, systemPrompt, history) {
+async function callOpenAI(message, systemPrompt, history, options = {}) {
     const messages = [
         { role: "system", content: systemPrompt },
         ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content })),
@@ -93,7 +113,8 @@ async function callOpenAI(message, systemPrompt, history) {
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
         model: "gpt-4o-mini",
         messages: messages,
-        max_tokens: 300
+        max_tokens: options.maxTokens || 300,
+        temperature: options.temperature || 0.7
     }, {
         headers: {
             'Content-Type': 'application/json',
@@ -105,14 +126,16 @@ async function callOpenAI(message, systemPrompt, history) {
     return response.data.choices[0].message.content;
 }
 
-async function callDeepSeek(message, systemPrompt, history) {
+async function callDeepSeek(message, systemPrompt, history, options = {}) {
     const response = await axios.post('https://api.deepseek.com/chat/completions', {
         model: "deepseek-chat",
         messages: [
             { role: "system", content: systemPrompt },
             ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content })),
             { role: "user", content: message }
-        ]
+        ],
+        max_tokens: options.maxTokens || 300,
+        temperature: options.temperature || 0.7
     }, {
         headers: {
             'Content-Type': 'application/json',
