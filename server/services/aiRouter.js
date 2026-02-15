@@ -59,15 +59,32 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 systemInstruction: systemPrompt
             });
 
-            // CORRECCIÓN STATUS 400: Formateo estricto para Gemini (role 'model' no 'assistant')
-            let chatHistory = combinedHistory.map(msg => ({
-                role: msg.role === 'user' ? 'user' : 'model',
-                parts: [{ text: String(msg.content || msg.body || "") }],
-            })).filter(msg => msg.parts[0].text);
+            // --- FIX: Formateo estricto y alternancia de roles para Gemini ---
+            let chatHistory = [];
+            let lastRole = null;
 
-            // REGLA DE ORO GEMINI: El historial debe empezar siempre con un mensaje del usuario
+            for (const msg of combinedHistory) {
+                const role = msg.role === 'user' ? 'user' : 'model';
+                const text = String(msg.content || msg.body || msg.text || "");
+                if (!text.trim()) continue;
+
+                if (role === lastRole) {
+                    // Combinar mensajes consecutivos del mismo rol
+                    chatHistory[chatHistory.length - 1].parts[0].text += "\n" + text;
+                } else {
+                    chatHistory.push({ role: role, parts: [{ text: text }] });
+                    lastRole = role;
+                }
+            }
+
+            // REGLA 1: Debe empezar con 'user'
             while (chatHistory.length > 0 && chatHistory[0].role !== 'user') {
                 chatHistory.shift();
+            }
+
+            // REGLA 2: Debe terminar con 'model' (porque el siguiente es 'user' en sendMessage)
+            while (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'user') {
+                chatHistory.pop();
             }
 
             const chat = model.startChat({
@@ -81,6 +98,20 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
         } catch (error) {
             console.error(`⚠️ [aiRouter] Gemini falló (Status ${error.status || 'ERR'}): ${error.message}`);
+
+            // Reintento rápido con modelo alternativo si es 404
+            if (error.message.includes('not found') || error.status === 404) {
+                console.log("🔄 [aiRouter] Reintentando con gemini-1.5-flash-latest...");
+                try {
+                    const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
+                    const modelAlt = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+                    const result = await modelAlt.generateContent(userMessage);
+                    responseText = result.response.text();
+                    console.log(`✅ [aiRouter] Éxito con Gemini (Modelo alternativo)`);
+                } catch (e2) {
+                    console.error("❌ [aiRouter] Reintento fallido:", e2.message);
+                }
+            }
         }
     }
 
