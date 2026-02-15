@@ -16,7 +16,7 @@ const googleTTS = require('google-tts-api');
 const { createClient } = require('@supabase/supabase-js');
 // --- SERVICES ---
 const whatsappCloudAPI = require('./services/whatsappCloudAPI');
-const { generateResponse, cleanTextForTTS } = require('./services/aiRouter');
+const { generateResponse, cleanTextForTTS, detectPersonalityFromMessage } = require('./services/aiRouter');
 const useSupabaseAuthState = require('./services/supabaseAuthState');
 
 // --- Robust Key Cleaning ---
@@ -302,7 +302,6 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
 
     // --- HEURISTIC: AUTO-DETECT TOPIC ---
     if (userText) {
-        const { detectPersonalityFromMessage } = require('./services/aiRouter');
         const detected = detectPersonalityFromMessage(userText);
         if (detected && detected !== user.currentPersona) {
             console.log(`🎯 [ALEX] Auto-detected topic: ${detected} for user ${userId}`);

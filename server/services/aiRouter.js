@@ -48,8 +48,12 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
             console.log("🤖 [aiRouter] Attempting Gemini (Flash 1.5)...");
             responseText = await callGeminiFlash(userMessage, systemPrompt, history, { temperature, maxTokens });
         } catch (error) {
-            console.warn(`⚠️ Gemini failed: ${error.message}, jumping to fallbacks.`);
+            console.error(`❌ Gemini Error: ${error.message}`);
+            if (error.stack) console.error(error.stack);
+            console.warn("⚠️ Gemini failed, jumping to fallbacks.");
         }
+    } else {
+        console.warn("⚠️ Gemini skipped: GENAI_API_KEY missing or invalid.");
     }
 
     // 2. Fallbacks
@@ -254,7 +258,8 @@ async function generateAudio(text, voiceId = "21m00Tcm4TlvDq8ikWAM") { // Rachel
 module.exports = {
     generateResponse,
     generateAudio,
-    cleanTextForTTS
+    cleanTextForTTS,
+    detectPersonalityFromMessage
 };
 
 
