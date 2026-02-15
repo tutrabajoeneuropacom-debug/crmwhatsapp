@@ -48,21 +48,28 @@ app.get(['/qr-final', '/qr-final**'], (req, res) => {
                     <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px;" />
                 </div>
                 <p style="margin-top: 20px; color: #64748b">Estado: <b>${global.connectionStatus}</b></p>
-                <div style="margin-top: 20px;">
-                    <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold; margin: 5px;">🔄 Actualizar QR</button>
-                    <button onclick="window.location.href='/'" style="padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; margin: 5px;">🏠 Ir al Dashboard</button>
+                <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px; align-items: center;">
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">🔄 Actualizar QR</button>
+                        <button onclick="window.location.href='/'" style="padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold;">🏠 Dashboard</button>
+                    </div>
+                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 12px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 5px 15px; border-radius: 8px; margin-top: 10px;">⚠️ Limpiar Sesión y Reintentar</a>
                 </div>
             </div>
         `);
     } else {
         res.send(`
-            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center;">
-                <h1 style="color: #64748b">⏳ Alex está despertando...</h1>
+            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center; padding: 20px;">
+                <h1 style="color: #64748b; margin-bottom: 5px;">⏳ Alex está despertando...</h1>
+                <p style="color: #475569; margin-bottom: 20px;">(Baileys está negociando con la red de WhatsApp)</p>
                 <div style="width: 50px; height: 50px; border: 5px solid #1e293b; border-top-color: #4ade80; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto;"></div>
                 <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
                 <p>Estado actual: <b>${global.connectionStatus}</b></p>
-                <p style="color: #475569">Espera 15-30 segundos y presiona el botón.</p>
-                <button onclick="window.location.reload()" style="margin-top: 20px; padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">🔄 Reintentar Ahora</button>
+                <p style="color: #475569; font-size: 14px; max-width: 300px; margin: 15px auto;">Si tardas más de 1 minuto aquí, es posible que la conexión esté saturada.</p>
+                <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px; align-items: center;">
+                    <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">🔄 Reintentar Ahora</button>
+                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 12px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 5px 15px; border-radius: 8px; margin-top: 10px;">⚠️ Forzar Reinicio Total</a>
+                </div>
             </div>
         `);
     }
@@ -546,6 +553,35 @@ app.post('/whatsapp/persona', (req, res) => {
     res.status(400).json({ success: false, error: 'Persona invalid' });
 });
 
+app.get('/whatsapp/restart-direct', async (req, res) => {
+    console.log('🔄 Forced Restart Triggered via URL');
+    io.emit('wa_log', { body: '🔄 Reinicio forzado por el usuario...', from: 'SISTEMA', timestamp: Date.now() });
+
+    global.connectionStatus = 'DISCONNECTED';
+    global.qrCodeUrl = null;
+    reconnectAttempts = 0;
+
+    try {
+        if (sock) sock.end(undefined);
+        if (fs.existsSync(sessionsDir)) {
+            fs.rmSync(sessionsDir, { recursive: true, force: true });
+        }
+    } catch (e) { }
+
+    setTimeout(() => {
+        connectToWhatsApp();
+    }, 2000);
+
+    res.send(`
+        <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center;">
+            <h1 style="color: #ef4444">🧹 Sistema Reiniciado</h1>
+            <p>Se ha borrado el caché local y se está reintentando la conexión.</p>
+            <p>Espera 10 segundos y vuelve a la página del QR.</p>
+            <button onclick="window.location.href='/qr-final'" style="margin-top: 20px; padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">Volver al QR</button>
+        </div>
+    `);
+});
+
 app.post('/whatsapp/restart', async (req, res) => {
     console.log('🔄 Restarting WhatsApp connection...');
     global.connectionStatus = 'DISCONNECTED';
@@ -598,4 +634,23 @@ setInterval(async () => {
         // Global catch for interval
     }
 }, 30000); // Every 30s
+
+// --- STUCK DETECTOR ---
+let connectingSince = null;
+setInterval(() => {
+    if (global.connectionStatus === 'CONNECTING') {
+        if (!connectingSince) connectingSince = Date.now();
+        const duration = Date.now() - connectingSince;
+
+        if (duration > 180000) { // 3 minutes stuck in CONNECTING
+            console.warn('🕒 [ALEX] Connection STUCK for 3m. Forcing auto-restart...');
+            connectingSince = null;
+            global.connectionStatus = 'DISCONNECTED';
+            if (sock) try { sock.end(undefined); } catch (e) { }
+            connectToWhatsApp();
+        }
+    } else {
+        connectingSince = null;
+    }
+}, 10000);
 
