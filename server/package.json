@@ -4,7 +4,7 @@
   "description": "Backend for MVP Idiomas AI - Career Mastery Engine",
   "main": "index-minimal.js",
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node index-minimal.js",

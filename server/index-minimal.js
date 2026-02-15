@@ -203,6 +203,23 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
             return `🎯 *Personalidad actual:* ${p.name} ${p.emoji}\n_${p.role}_`;
         }
 
+        if (cmd === '!status') {
+            const up = Math.floor(process.uptime() / 60);
+            return `📊 *Estado de Alex v2.0*\n\n` +
+                `🤖 *Personalidad:* ${personas[user.currentPersona].name}\n` +
+                `📡 *Conexión:* ${global.connectionStatus}\n` +
+                `⏱️ *Uptime:* ${up} minutos\n` +
+                `👤 *Tu histórico:* ${user.chatLog.length} mensajes`;
+        }
+
+        if (cmd === '!reiniciar') {
+            setTimeout(() => {
+                if (sock) sock.end();
+                connectToWhatsApp();
+            }, 1000);
+            return "🔄 *Reiniciando conexión...* Dame 10 segundos.";
+        }
+
         if (cmd === '!reset') {
             user.chatLog = [];
             return "🧹 *Historial reiniciado.* ¿En qué puedo ayudarte desde cero?";
@@ -488,21 +505,28 @@ server.listen(PORT, () => { console.log(`🚀 Alex v2.0 Live on ${PORT}`); });
 
 // --- AGGRESSIVE ANTI-SLEEP (RENDER FIX) ---
 setInterval(async () => {
-    // 1. WebSocket Ping
-    if (sock && sock.ws && sock.ws.readyState === 1) {
-        try { sock.ws.ping(); } catch (e) { }
-    }
-    // 2. External Self-Ping (Using axios for robust HTTP/HTTPS handling)
-    if (EXTERNAL_URL) {
-        try {
-            await axios.get(`${EXTERNAL_URL}/health`, {
-                timeout: 5000,
-                headers: { 'User-Agent': 'Alex-Heartbeat/1.0' }
-            });
-            if (global.connectionStatus === 'READY') console.log('💓 [ALEX] Heartbeat OK');
-        } catch (e) {
-            // Silently ignore ping errors during restarts
+    try {
+        // 1. WebSocket Ping (Baileys)
+        if (sock && sock.ws && sock.ws.readyState === 1) {
+            try { sock.ws.ping(); } catch (e) { }
         }
+
+        // 2. Local Self-Ping (to avoid Render idle)
+        // Using localhost:PORT avoids all HTTPS/SSL protocol errors
+        try {
+            await axios.get(`http://localhost:${PORT}/health`, {
+                timeout: 5000,
+                headers: { 'User-Agent': 'Alex-Heartbeat/2.0' }
+            });
+            if (global.connectionStatus === 'READY') {
+                // Log only occasionally or depending on debug mode
+                // console.log('💓 [ALEX] Heartbeat OK');
+            }
+        } catch (e) {
+            // Silently ignore local errors during restarts
+        }
+    } catch (error) {
+        // Global catch for interval
     }
 }, 30000); // Every 30s
 
