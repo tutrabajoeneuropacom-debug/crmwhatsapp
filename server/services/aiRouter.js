@@ -42,13 +42,13 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
 
     console.log(`🧠 [aiRouter] Persona: ${currentPersona.name} (${personaKey})`);
 
-    // 1. Try GEMINI 1.5 FLASH (Prioritize speed)
-    if (GENAI_API_KEY && !GENAI_API_KEY.includes('AIzaSyBmMz50s-MqC9UhEHnwXILWAAFR5tG0Cq4')) {
+    // 1. Try GEMINI 1.5 FLASH (Prioritize speed & cost-efficiency)
+    if (GENAI_API_KEY && GENAI_API_KEY.length > 10) {
         try {
-            console.log("🤖 [aiRouter] Attempting Gemini...");
+            console.log("🤖 [aiRouter] Attempting Gemini (Flash 1.5)...");
             responseText = await callGeminiFlash(userMessage, systemPrompt, history, { temperature, maxTokens });
         } catch (error) {
-            console.warn("⚠️ Gemini failed, jumping to fallbacks.");
+            console.warn(`⚠️ Gemini failed: ${error.message}, jumping to fallbacks.`);
         }
     }
 
@@ -82,7 +82,7 @@ async function callGeminiFlash(message, systemPrompt, history, options = {}) {
     try {
         const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-1.5-flash-latest",
             systemInstruction: systemPrompt
         });
 
