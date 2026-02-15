@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+const https = require('https');
+const axios = require('axios');
 const { Server } = require("socket.io");
 const { makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -485,15 +487,22 @@ connectToWhatsApp();
 server.listen(PORT, () => { console.log(`🚀 Alex v2.0 Live on ${PORT}`); });
 
 // --- AGGRESSIVE ANTI-SLEEP (RENDER FIX) ---
-setInterval(() => {
+setInterval(async () => {
     // 1. WebSocket Ping
     if (sock && sock.ws && sock.ws.readyState === 1) {
-        sock.ws.ping();
+        try { sock.ws.ping(); } catch (e) { }
     }
-    // 2. External Self-Ping (to avoid Render idle)
-    const target = EXTERNAL_URL + '/health';
-    http.get(target, (res) => {
-        if (global.connectionStatus === 'READY') console.log('💓 [ALEX] Heartbeat OK');
-    }).on('error', () => { });
+    // 2. External Self-Ping (Using axios for robust HTTP/HTTPS handling)
+    if (EXTERNAL_URL) {
+        try {
+            await axios.get(`${EXTERNAL_URL}/health`, {
+                timeout: 5000,
+                headers: { 'User-Agent': 'Alex-Heartbeat/1.0' }
+            });
+            if (global.connectionStatus === 'READY') console.log('💓 [ALEX] Heartbeat OK');
+        } catch (e) {
+            // Silently ignore ping errors during restarts
+        }
+    }
 }, 30000); // Every 30s
 
