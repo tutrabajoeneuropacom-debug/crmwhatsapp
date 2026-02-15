@@ -269,21 +269,26 @@ async function connectToWhatsApp() {
     // 1. SESSION MANAGEMENT (SUPABASE PERSISTENCE)
     let authState;
     if (supabase) {
-        console.log('🔗 Using Supabase for persistent session storage.');
+        console.log('🔗 [ALEX] Using Supabase for persistent session storage.');
         authState = await useSupabaseAuthState(supabase);
     } else {
-        console.warn('⚠️ No Supabase credentials. Using local file storage (volatile).');
+        console.warn('⚠️ [ALEX] WARNING: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing.');
+        console.warn('⚠️ [ALEX] Sessions will NOT persist. Scan QR again if Render restarts.');
         authState = await useMultiFileAuthState(sessionsDir);
     }
     const { state, saveCreds } = authState;
 
+    // 2. BAILEYS INITIALIZATION (Optimized for Render)
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['Alex Cognitive', 'Chrome', '2.0.0'],
+        // Using standard Ubuntu/Chrome to avoid 405/408 errors
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
         syncFullHistory: false,
-        connectTimeoutMs: 60000,
+        connectTimeoutMs: 120000, // Increased to 120s for slow warmups
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000,
     });
 
     sock.ev.on('connection.update', (update) => {
