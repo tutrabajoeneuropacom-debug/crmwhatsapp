@@ -20,8 +20,8 @@ const useSupabaseAuthState = require('./services/supabaseAuthState');
 
 // --- SUPABASE SETUP ---
 const supabaseUrl = process.env.SUPABASE_URL;
-// Use SUPABASE_KEY (anon) as preferred, fallback to SERVICE_ROLE or ANON
-const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Use SUPABASE_SERVICE_ROLE_KEY as preferred for persistence, fallback to ANON
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 // --- SERVER SETUP ---
@@ -355,9 +355,11 @@ async function connectToWhatsApp() {
         logger: pino({ level: 'silent' }),
         browser: ['Alex v2.0', 'Chrome', '1.0.0'],
         syncFullHistory: false,
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 30000,
-        keepAliveIntervalMs: 15000,
+        connectTimeoutMs: 180000,      // 3 minutes for slow Render warmups
+        defaultQueryTimeoutMs: 90000,  // 90s for queries
+        keepAliveIntervalMs: 10000,    // More frequent keep-alive
+        markOnlineOnConnect: false,    // Reduce initial load
+        generateHighQualityLinkPreview: false,
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -375,16 +377,8 @@ async function connectToWhatsApp() {
             console.log(`📡 [ALEX] Closed (${statusCode}). Reconnect: ${shouldReconnect}`);
 
             if (statusCode === 408 || statusCode === 405) {
-                console.error(`🛑 [ALEX] Timeout/Session Error. Attempting recovery...`);
-                // Only wipe local session if NOT using Supabase to try a fresh start, 
-                // but we limit this to avoid infinite wiping.
-                if (!supabase && reconnectAttempts === 0 && fs.existsSync(sessionsDir)) {
-                    try {
-                        console.log('🧹 [ALEX] Wiping local session for fresh start...');
-                        fs.rmSync(sessionsDir, { recursive: true, force: true });
-                        fs.mkdirSync(sessionsDir, { recursive: true });
-                    } catch (e) { }
-                }
+                console.error(`🛑 [ALEX] Timeout/Session Error. Retrying without wiping session folder...`);
+                // We no longer wipe the session folder here to allow Baileys to resume
             }
 
             if (shouldReconnect) {
