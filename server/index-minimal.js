@@ -23,6 +23,11 @@ const useSupabaseAuthState = require('./services/supabaseAuthState');
 const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g, '');
 const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
 
+// --- RECONEXIÓN CONSTANTS (FIX REFERENCE ERRORS) ---
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_COOLDOWN = 60000;
+let reconnectAttempts = 0;
+
 // --- SUPABASE SETUP ---
 const supabaseUrl = process.env.SUPABASE_URL;
 // Use SUPABASE_SERVICE_ROLE_KEY as preferred for persistence, fallback to ANON
@@ -120,7 +125,9 @@ app.post('/api/webhook/whatsapp', async (req, res) => {
         const messageData = await whatsappCloudAPI.processWebhook(req.body);
         if (messageData && messageData.text) {
             const { from, text } = messageData;
-            const replyText = await generateResponse(text, 'ALEX_MIGRATION', []);
+            const userId = from.split('@')[0];
+            // Enviar userId para que mantenga la memoria conversacional
+            const replyText = await generateResponse(text, 'ALEX_MIGRATION', userId, []);
             await whatsappCloudAPI.sendMessage(from, replyText);
         }
         res.sendStatus(200);
@@ -304,7 +311,17 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (userText) {
         const detected = detectPersonalityFromMessage(userText);
         if (detected && detected !== user.currentPersona) {
-            console.log(`🎯 [ALEXANDRA] Auto-detected topic: ${detected} for user ${userId}`);
+            user.currentPersona = detected; // FIX: CAMBIO REAL de personalidad
+            console.log(`🎯 [ALEXANDRA] Auto-detected topic -> Personality: ${detected} for user ${userId}`);
+        }
+    }
+
+    // --- HEURISTIC: PHASE PROGRESSION (MIGRATION JOURNEY) ---
+    if (user.currentPersona === 'ALEX_MIGRATION' && user.journeyPhase === 0) {
+        const textLC = userText.toLowerCase();
+        if (textLC.includes('si') || textLC.includes('quiero') || textLC.includes('migrar') || textLC.includes('interesa')) {
+            user.journeyPhase = 1; // AVANZA DE FASE (Saludado -> Interesado)
+            console.log(`📈 [ALEXANDRA] Phase Progression: 0 -> 1 for user ${userId}`);
         }
     }
 
@@ -329,7 +346,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (user.chatLog.length > 20) user.chatLog = user.chatLog.slice(-20);
 
     try {
-        const aiResponse = await generateResponse(processedText, user.currentPersona, user.chatLog);
+        const aiResponse = await generateResponse(processedText, user.currentPersona, userId, user.chatLog);
         user.chatLog.push({ role: 'assistant', content: aiResponse });
         return aiResponse;
     } catch (e) {
@@ -433,27 +450,28 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['Ubuntu', 'Chrome', '110.0.5481.178'],
+        browser: ['Mac OS', 'Chrome', '110.0.5481.178'],
         syncFullHistory: false,
-        connectTimeoutMs: 300000,      // 5 minutes (Extreme)
-        defaultQueryTimeoutMs: 120000,  // 2 minutes
-        keepAliveIntervalMs: 5000,     // Very frequent keep-alive
-        markOnlineOnConnect: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000,
+        markOnlineOnConnect: true,
         generateHighQualityLinkPreview: false,
-        retryRequestDelayMs: 5000,
-        maxMsgRetryCount: 5,
     });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
             global.connectionStatus = 'QR_READY';
-            global.qrCodeUrl = null;
+            // Para el dashboard (socket): enviamos el string RAW del QR
+            io.emit('wa_qr', { qr: qr });
+
+            // Para la vista directa /qr-final (img tag): enviamos el DataURL
             QRCode.toDataURL(qr, (err, url) => {
                 if (!err) {
                     global.qrCodeUrl = url;
-                    io.emit('wa_qr', { qr: url });
                     addEventLog('📱 QR Generado. Escanea para conectar.', 'WHATSAPP');
+                    console.log('📱 [ALEX] QR String:', qr);
                 }
             });
         }
@@ -607,6 +625,37 @@ app.post('/whatsapp/persona', (req, res) => {
     res.status(400).json({ success: false, error: 'Persona invalid' });
 });
 
+app.get('/whatsapp/logout', async (req, res) => {
+    console.log('🚪 Manual Logout Triggered');
+    addEventLog('🚪 Cerrando sesión y borrando datos...', 'SISTEMA');
+
+    global.connectionStatus = 'DISCONNECTED';
+    global.qrCodeUrl = null;
+
+    try {
+        if (sock) {
+            sock.logout(); // Baileys standard logout
+            sock.end(undefined);
+        }
+        // Wipe local files
+        if (fs.existsSync(sessionsDir)) fs.rmSync(sessionsDir, { recursive: true, force: true });
+
+        // Wipe Supabase
+        if (supabase) {
+            await supabase.from('whatsapp_sessions').delete().eq('session_id', 'main_session');
+            console.log('✅ Supabase session wiped for logout.');
+        }
+    } catch (e) { console.error('Logout error:', e); }
+
+    res.send(`
+        <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center;">
+            <h1 style="color: #4ade80">👋 Sesión Cerrada</h1>
+            <p>Se ha desconectado de WhatsApp y borrado la sesión de la base de datos.</p>
+            <button onclick="window.location.href='/qr-final'" style="margin-top: 20px; padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">Volver a Conectar</button>
+        </div>
+    `);
+});
+
 app.get('/whatsapp/restart-direct', async (req, res) => {
     console.log('🔄 Forced Restart Triggered via URL');
     addEventLog('🔄 Reinicio forzado por el usuario...');
@@ -696,8 +745,8 @@ setInterval(() => {
         if (!connectingSince) connectingSince = Date.now();
         const duration = Date.now() - connectingSince;
 
-        if (duration > 180000) { // 3 minutes stuck in CONNECTING
-            console.warn('🕒 [ALEX] Connection STUCK for 3m. Forcing auto-restart...');
+        if (duration > 45000) { // FIX: 45 segundos para detectar el bloqueo (No 3 minutos!)
+            console.warn('🕒 [ALEX] Connection STUCK for 45s. Forcing auto-restart...');
             connectingSince = null;
             global.connectionStatus = 'DISCONNECTED';
             if (sock) try { sock.end(undefined); } catch (e) { }
