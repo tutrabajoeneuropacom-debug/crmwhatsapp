@@ -48,24 +48,26 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date() }
 app.get(['/qr-final', '/qr-final**'], (req, res) => {
     if (global.qrCodeUrl) {
         res.send(`
-            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center;">
-                <h1 style="color: #4ade80">📱 Escanea para conectar a Alexandra</h1>
-                <div style="background: white; padding: 20px; border-radius: 20px; box-shadow: 0 0 50px rgba(74, 222, 128, 0.2);">
-                    <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px;" />
+            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 100vh; font-family: sans-serif; text-align: center; padding: 40px 20px; box-sizing: border-box;">
+                <h1 style="color: #4ade80; margin-bottom: 30px;">📱 Escanea para conectar a Alexandra</h1>
+                <div style="background: white; padding: 20px; border-radius: 20px; box-shadow: 0 0 50px rgba(74, 222, 128, 0.2); margin-bottom: 20px;">
+                    <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px; display: block;" />
                 </div>
-                <p style="margin-top: 20px; color: #64748b">Estado: <b>${global.connectionStatus}</b></p>
+                <p style="margin-top: 10px; color: #64748b">Estado: <b>${global.connectionStatus}</b></p>
                 <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px; align-items: center;">
                     <div style="display: flex; gap: 10px;">
-                        <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">🔄 Actualizar QR</button>
-                        <button onclick="window.location.href='/'" style="padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold;">🏠 Dashboard</button>
+                        <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 8px;">🔄 Actualizar QR</button>
+                        <button onclick="window.location.href='/'" style="padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 8px;">🏠 Dashboard</button>
                     </div>
-                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 11px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 5px 15px; border-radius: 8px; margin-top: 10px; opacity: 0.7;">⚠️ Limpiar Sesión y Reintentar</a>
+                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 11px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 8px 15px; border-radius: 8px; margin-top: 10px; opacity: 0.7;">⚠️ Limpiar Sesión y Reintentar</a>
                 </div>
 
                 <!-- MINI LOGS -->
-                <div style="margin-top: 30px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 15px; width: 100%; max-width: 400px; text-align: left; font-family: monospace; font-size: 11px; border: 1px solid rgba(255,255,255,0.05);">
+                <div style="margin-top: 40px; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 20px; width: 100%; max-width: 450px; text-align: left; font-family: monospace; font-size: 11px; border: 1px solid rgba(255,255,255,0.05); overflow-x: hidden;">
                     <p style="color: #4ade80; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px;">📡 EVENTOS EN TIEMPO REAL</p>
-                    ${global.eventLogs.map(l => `<div style="margin-bottom: 4px;"><span style="color: #64748b">[${new Date(l.timestamp).toLocaleTimeString()}]</span> <span style="color: #4ade80">${l.from}:</span> <span style="color: #94a3b8">${l.body}</span></div>`).join('')}
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        ${global.eventLogs.map(l => `<div style="margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 4px;"><span style="color: #64748b">[${new Date(l.timestamp).toLocaleTimeString()}]</span> <span style="color: #4ade80">${l.from}:</span> <span style="color: #94a3b8">${l.body}</span></div>`).join('')}
+                    </div>
                     <p style="color: #334155; margin-top: 10px; font-size: 9px;">Server Time: ${new Date().toISOString()}</p>
                 </div>
             </div>
