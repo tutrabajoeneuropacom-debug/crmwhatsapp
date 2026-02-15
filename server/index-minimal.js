@@ -17,7 +17,8 @@ const { generateResponse, cleanTextForTTS } = require('./services/aiRouter');
 
 // --- SUPABASE SETUP ---
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+// Use SUPABASE_KEY (anon) as preferred, fallback to SERVICE_ROLE or ANON
+const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 // --- SERVER SETUP ---
@@ -160,30 +161,55 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (!userDatabase[userId]) {
         userDatabase[userId] = {
             name: 'Candidato',
-            chatLog: []
+            chatLog: [],
+            currentPersona: 'ALEX_MIGRATION',
+            lastMessageTime: 0,
+            messageCount: 0
         };
     }
     const user = userDatabase[userId];
 
-    // --- HEURISTIC: PERSONALITY SWITCHING & COMMANDS ---
+    // --- RATE LIMITING (10 per minute) ---
+    const now = Date.now();
+    if (now - user.lastMessageTime > 60000) {
+        user.messageCount = 0;
+        user.lastMessageTime = now;
+    }
+    user.messageCount++;
+    if (user.messageCount > 10) {
+        return "⚠️ Estás enviando mensajes muy rápido. Por favor, espera un momento.";
+    }
+
+    // --- HEURISTIC: COMMANDS ---
     if (userText && (userText.startsWith('!') || userText.startsWith('/'))) {
         const cmd = userText.toLowerCase().trim();
 
-        // 1. List Personalities
-        if (cmd.includes('personalidades') || cmd.includes('help') || cmd.includes('ayuda')) {
-            let list = "🤖 *Personalidades de Alex v2.0 disponibles:*\n\n";
+        if (cmd === '!ayuda' || cmd === '!help' || cmd === '!personalidades') {
+            let list = "🎭 *Menú de Personalidades Alex v2.0*\n\n";
             Object.values(personas).forEach(p => {
-                list += `${p.emoji} *${p.name}*: ${p.role}\n`;
+                list += `${p.emoji} *!${p.id.replace('ALEX_', '').toLowerCase()}*: ${p.role}\n`;
             });
-            list += "\n💡 Usa comandos como `!marketing`, `!closer` o `!migraciones` para cambiar.";
+            list += "\n✅ *Otros comandos:*\n";
+            list += "• `!actual`: Ver personalidad activa.\n";
+            list += "• `!reset`: Borrar historial de chat.\n";
             return list;
         }
 
-        // 2. Switch Personality
+        if (cmd === '!actual') {
+            const p = personas[user.currentPersona];
+            return `🎯 *Personalidad actual:* ${p.name} ${p.emoji}\n_${p.role}_`;
+        }
+
+        if (cmd === '!reset') {
+            user.chatLog = [];
+            return "🧹 *Historial reiniciado.* ¿En qué puedo ayudarte desde cero?";
+        }
+
+        // Switch Personality
         for (const [key, p] of Object.entries(personas)) {
             const shortName = key.replace('ALEX_', '').toLowerCase();
             if (cmd.includes(shortName)) {
-                global.currentPersona = key;
+                user.currentPersona = key;
                 return `✅ *Modo ${p.name}* activado ${p.emoji}\n_${p.role}_`;
             }
         }
@@ -193,11 +219,8 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (userText) {
         const { detectPersonalityFromMessage } = require('./services/aiRouter');
         const detected = detectPersonalityFromMessage(userText);
-        if (detected && detected !== global.currentPersona) {
-            console.log(`🎯 [ALEX] Auto-detected topic: ${detected}`);
-            // We don't force switch yet to avoid confusing the user, 
-            // but we could use it to influence the next response if we wanted.
-            // For now, let's just use it to suggest a switch or just log it.
+        if (detected && detected !== user.currentPersona) {
+            console.log(`🎯 [ALEX] Auto-detected topic: ${detected} for user ${userId}`);
         }
     }
 
@@ -219,10 +242,10 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     }
 
     user.chatLog.push({ role: 'user', content: processedText });
-    if (user.chatLog.length > 10) user.chatLog = user.chatLog.slice(-10);
+    if (user.chatLog.length > 20) user.chatLog = user.chatLog.slice(-20);
 
     try {
-        const aiResponse = await generateResponse(processedText, global.currentPersona, user.chatLog);
+        const aiResponse = await generateResponse(processedText, user.currentPersona, user.chatLog);
         user.chatLog.push({ role: 'assistant', content: aiResponse });
         return aiResponse;
     } catch (e) {
