@@ -358,18 +358,29 @@ async function speakAlex(id, text) {
     try {
         await sock.sendPresenceUpdate('recording', id);
 
-        // OPENAI TTS
+        // VOICE GENERATION LOOP
+        let voiced = false;
+
+        // 1. Try OPENAI TTS (Onyx)
         if (OPENAI_API_KEY) {
-            const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-            const mp3 = await openai.audio.speech.create({
-                model: "tts-1",
-                voice: "onyx", // MALE / AUTHORITATIVE
-                input: cleanText.substring(0, 4096)
-            });
-            const buffer = Buffer.from(await mp3.arrayBuffer());
-            await sock.sendMessage(id, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
-        } else {
-            // GOOGLE FALBACK
+            try {
+                const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+                const mp3 = await openai.audio.speech.create({
+                    model: "tts-1",
+                    voice: "onyx",
+                    input: cleanText.substring(0, 4096)
+                });
+                const buffer = Buffer.from(await mp3.arrayBuffer());
+                await sock.sendMessage(id, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
+                voiced = true;
+            } catch (err) {
+                console.error('⚠️ OpenAI TTS failed:', err.message);
+            }
+        }
+
+        // 2. Google Fallback (if OpenAI fails or missing)
+        if (!voiced) {
+            console.log("🔊 Fallback to Google TTS...");
             const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es', slow: false });
             for (const item of results) {
                 const buffer = Buffer.from(item.base64, 'base64');
