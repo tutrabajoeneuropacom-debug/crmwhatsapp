@@ -305,10 +305,12 @@ async function connectToWhatsApp() {
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log(`📡 WhatsApp closed! Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
 
-            if (statusCode === 405) {
-                console.error('🛑 ERROR 405 (Corrupted Session). Wiping and restarting...');
-                try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
-                connectToWhatsApp();
+            if (statusCode === 405 || statusCode === 408) {
+                console.error(`🛑 ERROR ${statusCode} (Session Issue). Wiping and restarting...`);
+                try {
+                    if (fs.existsSync(sessionsDir)) fs.rmSync(sessionsDir, { recursive: true, force: true });
+                } catch (e) { }
+                setTimeout(connectToWhatsApp, 5000);
             } else if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 5000); // 5s to avoid CPU spikes
             } else {
