@@ -134,6 +134,7 @@ app.get('/api/whatsapp/cloud/status', (req, res) => {
 });
 
 // --- GLOBAL STATE ---
+let sock;
 let isConnecting = false;
 global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
