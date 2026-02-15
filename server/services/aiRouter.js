@@ -42,18 +42,14 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
 
     console.log(`🧠 [aiRouter] Persona: ${currentPersona.name} (${personaKey})`);
 
-    // 1. Try GEMINI 1.5 FLASH (Prioritize speed & cost-efficiency)
+    // 1. Try Gemini (Stable REST Algorithm - TalkMe style)
     if (GENAI_API_KEY && GENAI_API_KEY.length > 10) {
         try {
-            console.log("🤖 [aiRouter] Attempting Gemini (Flash 1.5)...");
-            responseText = await callGeminiFlash(userMessage, systemPrompt, history, { temperature, maxTokens });
+            responseText = await callGeminiStable(userMessage, systemPrompt, history, { temperature, maxTokens });
         } catch (error) {
             console.error(`❌ Gemini Error: ${error.message}`);
-            if (error.stack) console.error(error.stack);
             console.warn("⚠️ Gemini failed, jumping to fallbacks.");
         }
-    } else {
-        console.warn("⚠️ Gemini skipped: GENAI_API_KEY missing or invalid.");
     }
 
     // 2. Fallbacks
@@ -80,39 +76,92 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
 
 // --- Specific AI Implementations ---
 
-async function callGeminiFlash(message, systemPrompt, history, options = {}) {
+async function callGeminiStable(message, systemPrompt, history, options = {}) {
     if (!GENAI_API_KEY) return null;
 
-    try {
-        const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
-            systemInstruction: systemPrompt
-        });
+    const apiVersions = ['v1beta', 'v1'];
+    const modelNames = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro-latest",
+        "gemini-1.0-pro"
+    ];
 
-        // Use standard content generation for single messages or simple history
-        const formattedHistory = formatHistoryForGemini(history);
+    for (const ver of apiVersions) {
+        for (const modelName of modelNames) {
+            const url = `https://generativelanguage.googleapis.com/${ver}/models/${modelName}:generateContent?key=${GENAI_API_KEY}`;
+            const useSystemField = (ver === 'v1beta' && modelName.includes('1.5'));
 
-        if (formattedHistory.length === 0) {
-            // Simple single-turn generation
-            const result = await model.generateContent(message);
-            return result.response.text();
-        } else {
-            // Multi-turn chat
-            const chat = model.startChat({
-                history: formattedHistory,
-                generationConfig: {
-                    maxOutputTokens: options.maxTokens || 300,
-                    temperature: options.temperature || 0.7,
+            let payload;
+            if (useSystemField) {
+                payload = {
+                    system_instruction: { parts: [{ text: systemPrompt }] },
+                    contents: [
+                        ...formatHistoryForREST(history),
+                        { role: "user", parts: [{ text: message }] }
+                    ],
+                    generationConfig: {
+                        maxOutputTokens: options.maxTokens || 1000,
+                        temperature: options.temperature || 0.7
+                    }
+                };
+            } else {
+                payload = {
+                    contents: [
+                        { role: "user", parts: [{ text: `INSTRUCTIONS: ${systemPrompt}` }] },
+                        { role: "model", parts: [{ text: "Understood. I will follow your instructions." }] },
+                        ...formatHistoryForREST(history),
+                        { role: "user", parts: [{ text: message }] }
+                    ],
+                    generationConfig: {
+                        maxOutputTokens: options.maxTokens || 1000,
+                        temperature: options.temperature || 0.7
+                    }
+                };
+            }
+
+            try {
+                console.log(`🤖 [aiRouter] Intentando Gemini Directo: ${modelName} (${ver})...`);
+                const response = await axios.post(url, payload, {
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 10000
+                });
+
+                if (response.data.candidates && response.data.candidates[0].content) {
+                    console.log(`✅ [aiRouter] ¡Éxito con ${modelName} (${ver})!`);
+                    return response.data.candidates[0].content.parts[0].text;
                 }
-            });
-            const result = await chat.sendMessage(message);
-            return result.response.text();
+            } catch (err) {
+                const status = err.response ? err.response.status : 'ERR';
+                if (status !== 404) {
+                    console.info(`ℹ️ [aiRouter] ${modelName} (${ver}) falló: status ${status}`);
+                }
+            }
         }
-    } catch (err) {
-        console.error("❌ Gemini API Error:", err.message);
-        throw err;
     }
+    return null;
+}
+
+function formatHistoryForREST(history) {
+    if (!history || !Array.isArray(history)) return [];
+    let formatted = [];
+    let lastRole = null;
+    for (const msg of history) {
+        if (msg.role === 'system' || !msg.content) continue;
+        const role = msg.role === 'user' ? 'user' : 'model';
+        if (role !== lastRole) {
+            formatted.push({
+                role: role,
+                parts: [{ text: String(msg.content) }]
+            });
+            lastRole = role;
+        } else {
+            const lastMsg = formatted[formatted.length - 1];
+            if (lastMsg) lastMsg.parts[0].text += "\n" + String(msg.content);
+        }
+    }
+    while (formatted.length > 0 && formatted[0].role !== 'user') formatted.shift();
+    return formatted;
 }
 
 async function callOpenAI(message, systemPrompt, history, options = {}) {
@@ -158,42 +207,7 @@ async function callDeepSeek(message, systemPrompt, history, options = {}) {
     return response.data.choices[0].message.content;
 }
 
-// --- Helper: Format History ---
-function formatHistoryForGemini(history) {
-    if (!history || !Array.isArray(history) || history.length === 0) return [];
 
-    let formatted = [];
-    let lastRole = null;
-
-    for (const msg of history) {
-        // Skip system messages (handled by systemInstruction) or empty content
-        if (msg.role === 'system' || !msg.content) continue;
-
-        const role = msg.role === 'user' ? 'user' : 'model';
-
-        // Gemini REQUIRE strictly alternating roles: user -> model -> user...
-        if (role !== lastRole) {
-            formatted.push({
-                role: role,
-                parts: [{ text: String(msg.content) }]
-            });
-            lastRole = role;
-        } else {
-            // If same role repeats, append text instead of creating new turn
-            const lastMsg = formatted[formatted.length - 1];
-            if (lastMsg) {
-                lastMsg.parts[0].text += "\n" + String(msg.content);
-            }
-        }
-    }
-
-    // Must start with 'user' role
-    while (formatted.length > 0 && formatted[0].role !== 'user') {
-        formatted.shift();
-    }
-
-    return formatted;
-}
 
 /**
  * Cleans Markdown and special characters for TTS engines.
