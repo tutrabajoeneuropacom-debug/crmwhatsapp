@@ -134,7 +134,7 @@ app.get('/api/whatsapp/cloud/status', (req, res) => {
 });
 
 // --- GLOBAL STATE ---
-let sock;
+let isConnecting = false;
 global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
 global.currentPersona = 'ALEX_MIGRATION';
@@ -387,6 +387,11 @@ async function speakAlex(id, text) {
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || `http://localhost:${PORT}`;
 
 async function connectToWhatsApp() {
+    if (isConnecting && global.connectionStatus === 'CONNECTING') {
+        console.log('⚠️ [ALEX] Connection already in progress. Skipping duplicate call.');
+        return;
+    }
+    isConnecting = true;
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
     addEventLog('🧠 Iniciando Motor Cognitivo...');
@@ -452,10 +457,12 @@ async function connectToWhatsApp() {
             }
 
             if (shouldReconnect) {
+                isConnecting = false;
                 reconnectAttempts++;
                 if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
                     console.error(`❌ [ALEX] Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached.`);
                     console.error(`⏰ [ALEX] Cooldown for ${RECONNECT_COOLDOWN / 60000} minutes before retrying...`);
+                    global.connectionStatus = 'DISCONNECTED';
                     setTimeout(() => {
                         console.log('🔄 [ALEX] Cooldown finished. Retrying connection...');
                         reconnectAttempts = 0;
@@ -467,15 +474,31 @@ async function connectToWhatsApp() {
                     setTimeout(connectToWhatsApp, delayMs);
                 }
             } else {
-                console.error('❌ [ALEX] Logged out. Manual intervention required.');
+                isConnecting = false;
+                console.error('❌ [ALEX] Logged out or Unauthorized (401). Manual intervention required.');
+
+                // 1. Wipe local cache
                 if (fs.existsSync(sessionsDir)) {
                     try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
                 }
-                // Don't auto-reconnect on logout to avoid QR spam, 
-                // but in this MVP we might want to anyway if the user is watching.
-                setTimeout(connectToWhatsApp, 5000);
+
+                // 2. Wipe Supabase Session (CRITICAL TO BREAK THE 401 LOOP)
+                if (supabase) {
+                    console.log('🧹 [ALEX] Wiping Supabase session due to 401 logout...');
+                    supabase.from('whatsapp_sessions').delete().eq('session_id', 'main_session')
+                        .then(() => console.log('✅ [ALEX] Supabase session cleared.'))
+                        .catch(e => console.error('❌ [ALEX] Supabase clear error:', e.message));
+                }
+
+                global.connectionStatus = 'DISCONNECTED';
+                global.qrCodeUrl = null;
+
+                // Retry with a clean state after a short delay
+                addEventLog('🔄 Sesión expirada. Generando nuevo QR...', 'SISTEMA');
+                setTimeout(connectToWhatsApp, 10000);
             }
         } else if (connection === 'open') {
+            isConnecting = false;
             reconnectAttempts = 0; // Reset attempts on success
             global.connectionStatus = 'READY';
             global.qrCodeUrl = null;
