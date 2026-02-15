@@ -60,10 +60,15 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
             });
 
             // CORRECCIÓN STATUS 400: Formateo estricto para Gemini (role 'model' no 'assistant')
-            const chatHistory = combinedHistory.map(msg => ({
+            let chatHistory = combinedHistory.map(msg => ({
                 role: msg.role === 'user' ? 'user' : 'model',
                 parts: [{ text: String(msg.content || msg.body || "") }],
             })).filter(msg => msg.parts[0].text);
+
+            // REGLA DE ORO GEMINI: El historial debe empezar siempre con un mensaje del usuario
+            while (chatHistory.length > 0 && chatHistory[0].role !== 'user') {
+                chatHistory.shift();
+            }
 
             const chat = model.startChat({
                 history: chatHistory,

@@ -23,10 +23,10 @@ const useSupabaseAuthState = require('./services/supabaseAuthState');
 const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g, '');
 const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
 
-// --- RECONEXIÓN CONSTANTS (FIX REFERENCE ERRORS) ---
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_COOLDOWN = 60000;
-let reconnectAttempts = 0;
+// --- RECONEXIÓN CONSTANTS (GLOBAL) ---
+global.MAX_RECONNECT_ATTEMPTS = 5;
+global.RECONNECT_COOLDOWN = 60000;
+global.reconnectAttempts = 0;
 
 // --- SUPABASE SETUP ---
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -488,19 +488,19 @@ async function connectToWhatsApp() {
 
             if (shouldReconnect) {
                 isConnecting = false;
-                reconnectAttempts++;
-                if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-                    console.error(`❌ [ALEX] Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached.`);
-                    console.error(`⏰ [ALEX] Cooldown for ${RECONNECT_COOLDOWN / 60000} minutes before retrying...`);
+                global.reconnectAttempts++;
+                if (global.reconnectAttempts > global.MAX_RECONNECT_ATTEMPTS) {
+                    console.error(`❌ [ALEX] Max reconnection attempts (${global.MAX_RECONNECT_ATTEMPTS}) reached.`);
+                    console.error(`⏰ [ALEX] Cooldown for ${global.RECONNECT_COOLDOWN / 60000} minutes before retrying...`);
                     global.connectionStatus = 'DISCONNECTED';
                     setTimeout(() => {
                         console.log('🔄 [ALEX] Cooldown finished. Retrying connection...');
-                        reconnectAttempts = 0;
+                        global.reconnectAttempts = 0;
                         connectToWhatsApp();
-                    }, RECONNECT_COOLDOWN);
+                    }, global.RECONNECT_COOLDOWN);
                 } else {
-                    const delayMs = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-                    console.log(`🔄 [ALEX] Reconnecting in ${delayMs / 1000}s (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                    const delayMs = Math.min(1000 * Math.pow(2, global.reconnectAttempts), 30000);
+                    console.log(`🔄 [ALEX] Reconnecting in ${delayMs / 1000}s (Attempt ${global.reconnectAttempts}/${global.MAX_RECONNECT_ATTEMPTS})...`);
                     setTimeout(connectToWhatsApp, delayMs);
                 }
             } else {
@@ -662,7 +662,7 @@ app.get('/whatsapp/restart-direct', async (req, res) => {
 
     global.connectionStatus = 'DISCONNECTED';
     global.qrCodeUrl = null;
-    reconnectAttempts = 0;
+    global.reconnectAttempts = 0;
 
     try {
         if (sock) sock.end(undefined);
