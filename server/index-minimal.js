@@ -18,10 +18,14 @@ const whatsappCloudAPI = require('./services/whatsappCloudAPI');
 const { generateResponse, cleanTextForTTS } = require('./services/aiRouter');
 const useSupabaseAuthState = require('./services/supabaseAuthState');
 
+// --- Robust Key Cleaning ---
+const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g, '');
+const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
+
 // --- SUPABASE SETUP ---
 const supabaseUrl = process.env.SUPABASE_URL;
 // Use SUPABASE_SERVICE_ROLE_KEY as preferred for persistence, fallback to ANON
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseKey = cleanKey(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY);
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 // --- SERVER SETUP ---
@@ -279,11 +283,11 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
 
     // Handle Audio
     let processedText = userText;
-    if (userAudioBuffer && process.env.OPENAI_API_KEY) {
+    if (userAudioBuffer && OPENAI_API_KEY) {
         try {
             const tempPath = path.join(__dirname, `audio_in_${Date.now()}.ogg`);
             fs.writeFileSync(tempPath, userAudioBuffer);
-            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
             const transcription = await openai.audio.transcriptions.create({
                 file: fs.createReadStream(tempPath),
                 model: "whisper-1", language: "es"
@@ -328,8 +332,8 @@ async function speakAlex(id, text) {
         await sock.sendPresenceUpdate('recording', id);
 
         // OPENAI TTS
-        if (process.env.OPENAI_API_KEY) {
-            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        if (OPENAI_API_KEY) {
+            const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
             const mp3 = await openai.audio.speech.create({
                 model: "tts-1",
                 voice: "onyx", // MALE / AUTHORITATIVE

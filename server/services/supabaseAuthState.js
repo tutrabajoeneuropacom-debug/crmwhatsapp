@@ -54,7 +54,9 @@ const useSupabaseAuthState = async (supabase) => {
         }
 
         if (updates.length > 0) {
-            const { error } = await supabase.from('whatsapp_sessions').upsert(updates);
+            const { error } = await supabase
+                .from('whatsapp_sessions')
+                .upsert(updates, { onConflict: 'session_id,key_type,key_id' });
             if (error) console.error('Error saving session to Supabase:', error.message);
         }
     };

@@ -86,17 +86,25 @@ async function callGeminiFlash(message, systemPrompt, history, options = {}) {
             systemInstruction: systemPrompt
         });
 
-        const chat = model.startChat({
-            history: formatHistoryForGemini(history),
-            generationConfig: {
-                maxOutputTokens: options.maxTokens || 300,
-                temperature: options.temperature || 0.7,
-            }
-        });
+        // Use standard content generation for single messages or simple history
+        const formattedHistory = formatHistoryForGemini(history);
 
-        const result = await chat.sendMessage(message);
-        const response = await result.response;
-        return response.text();
+        if (formattedHistory.length === 0) {
+            // Simple single-turn generation
+            const result = await model.generateContent(message);
+            return result.response.text();
+        } else {
+            // Multi-turn chat
+            const chat = model.startChat({
+                history: formattedHistory,
+                generationConfig: {
+                    maxOutputTokens: options.maxTokens || 300,
+                    temperature: options.temperature || 0.7,
+                }
+            });
+            const result = await chat.sendMessage(message);
+            return result.response.text();
+        }
     } catch (err) {
         console.error("❌ Gemini API Error:", err.message);
         throw err;
@@ -148,25 +156,35 @@ async function callDeepSeek(message, systemPrompt, history, options = {}) {
 
 // --- Helper: Format History ---
 function formatHistoryForGemini(history) {
-    if (!history || !Array.isArray(history)) return [];
+    if (!history || !Array.isArray(history) || history.length === 0) return [];
 
     let formatted = [];
     let lastRole = null;
 
     for (const msg of history) {
-        if (msg.role === 'system') continue;
+        // Skip system messages (handled by systemInstruction) or empty content
+        if (msg.role === 'system' || !msg.content) continue;
+
         const role = msg.role === 'user' ? 'user' : 'model';
 
+        // Gemini REQUIRE strictly alternating roles: user -> model -> user...
         if (role !== lastRole) {
             formatted.push({
                 role: role,
-                parts: [{ text: msg.content || "" }]
+                parts: [{ text: String(msg.content) }]
             });
             lastRole = role;
+        } else {
+            // If same role repeats, append text instead of creating new turn
+            const lastMsg = formatted[formatted.length - 1];
+            if (lastMsg) {
+                lastMsg.parts[0].text += "\n" + String(msg.content);
+            }
         }
     }
 
-    if (formatted.length > 0 && formatted[0].role !== 'user') {
+    // Must start with 'user' role
+    while (formatted.length > 0 && formatted[0].role !== 'user') {
         formatted.shift();
     }
 
