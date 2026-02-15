@@ -4,8 +4,14 @@ import { Zap, DollarSign, Activity, Users, FileText, QrCode, Cloud, Lock, Settin
 import axios from 'axios';
 
 // API configuration
+const getBaseUrl = () => {
+    if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+    if (typeof window !== 'undefined') return window.location.origin;
+    return 'http://localhost:3000';
+};
+
 const api = axios.create({
-    baseURL: import.meta.env.VITE_API_URL || 'https://crmwhatsapp-xari.onrender.com', // Assuming this is the SaaS backend
+    baseURL: getBaseUrl(),
 });
 
 const SaasDashboard = () => {

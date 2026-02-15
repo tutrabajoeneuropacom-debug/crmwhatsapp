@@ -329,21 +329,24 @@ const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || 
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
+    io.emit('wa_log', { body: '🧠 Iniciando Motor Cognitivo...', from: 'SISTEMA', timestamp: Date.now() });
     console.log('🧠 [ALEX] Starting Cognitive Engine...');
 
     // 1. SESSION MANAGEMENT (SUPABASE PERSISTENCE)
     let authState;
     if (supabase) {
         console.log('🔗 [ALEX] Persistence enabled (Supabase).');
+        io.emit('wa_log', { body: '🔗 Persistencia habilitada (Supabase)', from: 'SISTEMA', timestamp: Date.now() });
         try {
             authState = await useSupabaseAuthState(supabase);
         } catch (e) {
             console.error('❌ [ALEX] Supabase Auth Error:', e.message);
+            io.emit('wa_log', { body: '❌ Error en Supabase: ' + e.message, from: 'SISTEMA', timestamp: Date.now() });
             authState = await useMultiFileAuthState(sessionsDir);
         }
     } else {
         console.warn('⚠️ [ALEX] Persistence DISABLED. Missing SUPABASE_URL/KEY.');
-        console.warn('⚠️ [ALEX] Sessions will wipe on Render restart.');
+        io.emit('wa_log', { body: '⚠️ Persistencia local (Sin Supabase)', from: 'SISTEMA', timestamp: Date.now() });
         authState = await useMultiFileAuthState(sessionsDir);
     }
     const { state, saveCreds } = authState;
@@ -370,13 +373,18 @@ async function connectToWhatsApp() {
             global.connectionStatus = 'QR_READY';
             global.qrCodeUrl = null;
             QRCode.toDataURL(qr, (err, url) => {
-                if (!err) { global.qrCodeUrl = url; io.emit('wa_qr', { qr: url }); }
+                if (!err) {
+                    global.qrCodeUrl = url;
+                    io.emit('wa_qr', { qr: url });
+                    io.emit('wa_log', { body: '📱 QR Generado. Escanea para conectar.', from: 'WHATSAPP', timestamp: Date.now() });
+                }
             });
         }
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log(`📡 [ALEX] Closed (${statusCode}). Reconnect: ${shouldReconnect}`);
+            io.emit('wa_log', { body: `📡 Conexión cerrada (${statusCode}). Reintentando: ${shouldReconnect}`, from: 'SISTEMA', timestamp: Date.now() });
 
             if (statusCode === 408 || statusCode === 405) {
                 console.error(`🛑 [ALEX] Timeout/Session Error. Retrying without wiping session folder...`);
@@ -412,6 +420,7 @@ async function connectToWhatsApp() {
             global.connectionStatus = 'READY';
             global.qrCodeUrl = null;
             io.emit('wa_status', { status: 'READY' });
+            io.emit('wa_log', { body: '✅ WhatsApp Conectado y Listo.', from: 'WHATSAPP', timestamp: Date.now() });
             console.log('✅ [ALEX] WhatsApp Connected.');
         }
     });
@@ -464,6 +473,30 @@ async function connectToWhatsApp() {
 }
 
 // --- EXPRESS SERVER (UPDATED ENDPOINT) ---
+app.get('/qr-final', (req, res) => {
+    if (global.qrCodeUrl) {
+        res.send(`
+            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;">
+                <h1 style="color: #4ade80">📱 Escanea para conectar a Alex</h1>
+                <div style="background: white; padding: 20px; border-radius: 20px;">
+                    <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px;" />
+                </div>
+                <p style="margin-top: 20px; color: #64748b">Estado: ${global.connectionStatus}</p>
+                <button onclick="window.location.reload()" style="margin-top: 20px; padding: 10px 20px; background: #1e293b; color: white; border: none; border-radius: 10px; cursor: pointer;">Actualizar</button>
+            </div>
+        `);
+    } else {
+        res.send(`
+            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;">
+                <h1 style="color: #64748b">⏳ Esperando QR...</h1>
+                <p>Estado actual: <b>${global.connectionStatus}</b></p>
+                <p>Espera 10-20 segundos y refresca la página.</p>
+                <button onclick="window.location.reload()" style="margin-top: 20px; padding: 10px 20px; background: #1e293b; color: white; border: none; border-radius: 10px; cursor: pointer;">Actualizar</button>
+            </div>
+        `);
+    }
+});
+
 app.post('/saas/connect', (req, res) => {
     // 1. If QR is ready, send it immediately
     if (global.qrCodeUrl) {
@@ -516,9 +549,12 @@ app.post('/whatsapp/restart', async (req, res) => {
 
 app.get('/api/logs', (req, res) => res.json([]));
 app.get('*', (req, res) => {
-    if (fs.existsSync(path.join(CLIENT_BUILD_PATH, 'index.html')))
+    if (fs.existsSync(path.join(CLIENT_BUILD_PATH, 'index.html'))) {
         res.sendFile(path.join(CLIENT_BUILD_PATH, 'index.html'));
-    else res.send('Alex Cognitive Engine Live');
+    } else {
+        // If frontend is missing, redirect to the direct QR view
+        res.redirect('/qr-final');
+    }
 });
 
 // START
