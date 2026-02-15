@@ -68,15 +68,28 @@ function App() {
 
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
-        <div className="bg-red-500/10 border border-red-500 rounded-lg p-6 max-w-md text-center">
-          <h2 className="text-xl font-bold text-red-400 mb-4">Error de Conexión</h2>
-          <p className="text-slate-300 mb-4">No se ha podido conectar con el servidor (Supabase).</p>
-          <button
-            onClick={handleBypass}
-            className="mt-4 px-6 py-2 bg-slate-700 hover:bg-slate-600 rounded-full transition-all text-sm font-medium"
-          >
-            Continuar en Modo Demo (Bypass)
-          </button>
+        <div className="bg-slate-800 border border-slate-700 rounded-3xl p-8 max-w-md text-center shadow-2xl">
+          <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <span className="text-3xl">⚠️</span>
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-4">Configuración Pendiente</h2>
+          <p className="text-slate-400 mb-6 leading-relaxed">
+            No hemos detectado la conexión con Supabase en el Frontend. Puedes continuar en <b>Modo de Visualización</b> para ver el panel de WhatsApp.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={handleBypass}
+              className="w-full py-4 bg-green-600 hover:bg-green-500 rounded-xl transition-all font-bold shadow-lg shadow-green-900/40"
+            >
+              🚀 Entrar en Modo Demo
+            </button>
+            <a
+              href="/qr-final"
+              className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl transition-all font-bold text-slate-300 text-sm"
+            >
+              📱 Ver QR Directamente
+            </a>
+          </div>
         </div>
       </div>
     );

@@ -34,6 +34,36 @@ app.use(express.json());
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
+// --- DIRECT QR VIEW (BYPASS FRONTEND) ---
+app.get(['/qr-final', '/qr-final**'], (req, res) => {
+    if (global.qrCodeUrl) {
+        res.send(`
+            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center;">
+                <h1 style="color: #4ade80">📱 Escanea para conectar a Alex</h1>
+                <div style="background: white; padding: 20px; border-radius: 20px; box-shadow: 0 0 50px rgba(74, 222, 128, 0.2);">
+                    <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px;" />
+                </div>
+                <p style="margin-top: 20px; color: #64748b">Estado: <b>${global.connectionStatus}</b></p>
+                <div style="margin-top: 20px;">
+                    <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold; margin: 5px;">🔄 Actualizar QR</button>
+                    <button onclick="window.location.href='/'" style="padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; margin: 5px;">🏠 Ir al Dashboard</button>
+                </div>
+            </div>
+        `);
+    } else {
+        res.send(`
+            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center;">
+                <h1 style="color: #64748b">⏳ Alex está despertando...</h1>
+                <div style="width: 50px; height: 50px; border: 5px solid #1e293b; border-top-color: #4ade80; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto;"></div>
+                <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+                <p>Estado actual: <b>${global.connectionStatus}</b></p>
+                <p style="color: #475569">Espera 15-30 segundos y presiona el botón.</p>
+                <button onclick="window.location.reload()" style="margin-top: 20px; padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">🔄 Reintentar Ahora</button>
+            </div>
+        `);
+    }
+});
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
@@ -472,30 +502,7 @@ async function connectToWhatsApp() {
     });
 }
 
-// --- EXPRESS SERVER (UPDATED ENDPOINT) ---
-app.get('/qr-final', (req, res) => {
-    if (global.qrCodeUrl) {
-        res.send(`
-            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;">
-                <h1 style="color: #4ade80">📱 Escanea para conectar a Alex</h1>
-                <div style="background: white; padding: 20px; border-radius: 20px;">
-                    <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px;" />
-                </div>
-                <p style="margin-top: 20px; color: #64748b">Estado: ${global.connectionStatus}</p>
-                <button onclick="window.location.reload()" style="margin-top: 20px; padding: 10px 20px; background: #1e293b; color: white; border: none; border-radius: 10px; cursor: pointer;">Actualizar</button>
-            </div>
-        `);
-    } else {
-        res.send(`
-            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;">
-                <h1 style="color: #64748b">⏳ Esperando QR...</h1>
-                <p>Estado actual: <b>${global.connectionStatus}</b></p>
-                <p>Espera 10-20 segundos y refresca la página.</p>
-                <button onclick="window.location.reload()" style="margin-top: 20px; padding: 10px 20px; background: #1e293b; color: white; border: none; border-radius: 10px; cursor: pointer;">Actualizar</button>
-            </div>
-        `);
-    }
-});
+// Routes moved to top
 
 app.post('/saas/connect', (req, res) => {
     // 1. If QR is ready, send it immediately
