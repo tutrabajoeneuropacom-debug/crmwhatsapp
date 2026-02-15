@@ -10,34 +10,20 @@ const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
 const DEEPSEEK_API_KEY = cleanKey(process.env.DEEPSEEK_API_KEY);
 const ELEVENLABS_API_KEY = cleanKey(process.env.ELEVENLABS_API_KEY);
 
-// Diagnostic Log
-console.log("🔍 [aiRouter] API Status:");
-console.log(`- Gemini: ${GENAI_API_KEY ? 'Present' : 'Missing'}`);
-console.log(`- OpenAI: ${OPENAI_API_KEY ? 'Present' : 'Missing'}`);
-
-// System Prompts & Personas
-const PERSONAS = {
-    ALEX_MIGRATION: `Eres Alex, un asistente experto en migración y recolocación internacional de Puentes Globales.
-    Tu objetivo es empatizar con los dolores del usuario al emigrar (burocracia, soledad, idioma, trabajo) y ofrecer soluciones sutilmente.
-    Hablas con un tono profesional pero cercano, empático y alentador.
-    
-    Servicios clave de Puentes Globales que puedes mencionar si es relevante:
-    1. Trámites de Visas y Ciudadanía.
-    2. Búsqueda de Empleo Internacional (Career Mastery).
-    3. Idiomas (TalkMe) para superar la barrera lingüística.
-    4. Comunidad y Soporte en destino.
-    
-    NO vendas agresivamente. Escucha primero, valida sus sentimientos, y luego sugiere cómo Puentes Globales puede aliviar ese dolor.
-    Responde en español latino neutro.`
-};
+const personas = require('../config/personas');
 
 // --- Main Text Generation Function ---
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', history = []) {
     let responseText = null;
-    const systemPrompt = PERSONAS[personaKey] || personaKey;
 
-    // 1. Try GEMINI 1.5 FLASH (Fast but fails if key is bad)
-    if (GENAI_API_KEY && !GENAI_API_KEY.includes('AIzaSyBmMz50s-MqC9UhEHnwXILWAAFR5tG0Cq4')) { // Skip known bad key
+    // Select Persona
+    const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
+    const systemPrompt = currentPersona.systemPrompt;
+
+    console.log(`🧠 [aiRouter] Using Persona: ${currentPersona.name}`);
+
+    // 1. Try GEMINI 1.5 FLASH (Prioritize speed)
+    if (GENAI_API_KEY && !GENAI_API_KEY.includes('AIzaSyBmMz50s-MqC9UhEHnwXILWAAFR5tG0Cq4')) {
         try {
             console.log("🤖 [aiRouter] Attempting Gemini...");
             responseText = await callGeminiFlash(userMessage, systemPrompt, history);
@@ -46,7 +32,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
         }
     }
 
-    // 2. Fallback: OpenAI (Reliable) -> DeepSeek
+    // 2. Fallbacks
     if (!responseText) {
         if (OPENAI_API_KEY) {
             try {
@@ -65,7 +51,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', hist
         }
     }
 
-    return responseText || "Lo siento, tuve un problema técnico. ¿Podrías repetirlo?";
+    return responseText || "Alex está teniendo un momento de reflexión profunda... por favor, intenta de nuevo.";
 }
 
 // --- Specific AI Implementations ---

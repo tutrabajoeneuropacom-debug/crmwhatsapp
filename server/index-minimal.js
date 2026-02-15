@@ -74,10 +74,13 @@ app.get('/api/whatsapp/cloud/status', (req, res) => {
     res.json(whatsappCloudAPI.getStatus());
 });
 
-// --- GLOBAL BAILEYS STATE ---
+// --- GLOBAL STATE ---
 let sock;
 global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
+global.currentPersona = 'ALEX_MIGRATION';
+
+const personas = require('./config/personas');
 const sessionsDir = path.join(__dirname, 'auth_info_baileys');
 if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 
@@ -154,18 +157,30 @@ const getDynamicPrompt = (userData, recentHistory) => {
 
 // 3. COGNITIVE PROCESSOR (The Brain)
 async function processMessageAleX(userId, userText, userAudioBuffer = null) {
-    // A. Init User State if new
     if (!userDatabase[userId]) {
         userDatabase[userId] = {
             name: 'Candidato',
-            journeyPhase: 0,
-            metrics: { cvScore: null },
-            chatLog: [] // Short term memory
+            chatLog: []
         };
     }
     const user = userDatabase[userId];
 
-    // B. Handle Audio (Whisper Ear)
+    // Handle Persona Switching via Command
+    if (userText && (userText.startsWith('!') || userText.startsWith('/'))) {
+        const cmd = userText.toLowerCase().trim();
+        if (cmd.includes('marketing')) {
+            global.currentPersona = 'ALEX_MARKETING';
+            return "✅ Modo **Marketing** activado. ¿Qué campaña analizamos?";
+        } else if (cmd.includes('closer')) {
+            global.currentPersona = 'ALEX_CLOSER';
+            return "✅ Modo **Closer** activado. Estoy listo para cerrar esa venta.";
+        } else if (cmd.includes('migra')) {
+            global.currentPersona = 'ALEX_MIGRATION';
+            return "✅ Modo **Migraciones** activado. ¿Qué duda legal tienes?";
+        }
+    }
+
+    // Handle Audio
     let processedText = userText;
     if (userAudioBuffer && process.env.OPENAI_API_KEY) {
         try {
@@ -182,35 +197,16 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         } catch (e) { console.error('Whisper fail', e); }
     }
 
-    // UPDATE HISTORY
     user.chatLog.push({ role: 'user', content: processedText });
     if (user.chatLog.length > 10) user.chatLog = user.chatLog.slice(-10);
 
-    // C. INTELLIGENT ROUTING (Pseudo-Function Calling)
-    const lowerText = processedText.toLowerCase();
-
-    // Heuristics to update state (Cognitive Dots)
-    if (lowerText.includes('cv') && lowerText.includes('listo') && user.journeyPhase === 0) {
-        user.journeyPhase = 1; // User says "CV Ready"
-    } else if (lowerText.includes('ats') && (lowerText.includes('mal') || lowerText.includes('error')) && user.journeyPhase === 1) {
-        user.journeyPhase = 2; // User simulated ATS and failed
-    } else if (lowerText.includes('agendar') || lowerText.includes('llamada')) {
-        user.journeyPhase = 4; // Wants to book
-    }
-
-    // D. GENERATE RESPONSE (Unified aiRouter)
-    const dynamicSystemPrompt = getDynamicPrompt(user, user.chatLog);
-
     try {
-        const aiResponse = await generateResponse(processedText, dynamicSystemPrompt, user.chatLog);
-
-        // Update History
+        const aiResponse = await generateResponse(processedText, global.currentPersona, user.chatLog);
         user.chatLog.push({ role: 'assistant', content: aiResponse });
-
         return aiResponse;
     } catch (e) {
-        console.error('Brain Error (aiRouter):', e);
-        return "⚠️ Alex está pensando... dame un segundo.";
+        console.error('Brain Error:', e);
+        return "⚠️ Alex está recalibrando sus sistemas... dame un momento.";
     }
 }
 
@@ -396,19 +392,27 @@ app.post('/saas/connect', (req, res) => {
 app.get('/whatsapp/status', (req, res) => {
     res.json({
         status: global.connectionStatus,
-        qr: global.qrCodeUrl
+        qr: global.qrCodeUrl,
+        persona: global.currentPersona
     });
 });
 
+app.post('/whatsapp/persona', (req, res) => {
+    const { persona } = req.body;
+    if (personas[persona]) {
+        global.currentPersona = persona;
+        return res.json({ success: true, persona: persona });
+    }
+    res.status(400).json({ success: false, error: 'Persona invalid' });
+});
+
 app.post('/whatsapp/restart', async (req, res) => {
-    console.log('🔄 Restarting WhatsApp connection as requested...');
+    console.log('🔄 Restarting WhatsApp connection...');
     global.connectionStatus = 'DISCONNECTED';
     global.qrCodeUrl = null;
     try {
         if (sock) sock.end(undefined);
-        if (fs.existsSync(sessionsDir)) {
-            fs.rmSync(sessionsDir, { recursive: true, force: true });
-        }
+        if (fs.existsSync(sessionsDir)) fs.rmSync(sessionsDir, { recursive: true, force: true });
     } catch (e) { }
     connectToWhatsApp();
     res.json({ success: true, message: 'Restarting...' });
@@ -418,21 +422,22 @@ app.get('/api/logs', (req, res) => res.json([]));
 app.get('*', (req, res) => {
     if (fs.existsSync(path.join(CLIENT_BUILD_PATH, 'index.html')))
         res.sendFile(path.join(CLIENT_BUILD_PATH, 'index.html'));
-    else res.send('Alex Cognitive Engine Loading...');
+    else res.send('Alex Cognitive Engine Live');
 });
 
 // START
 connectToWhatsApp();
 server.listen(PORT, () => { console.log(`🚀 Alex v2.0 Live on ${PORT}`); });
 
-// --- ANTI-SLEEP MECHANISM (RENDER FREE TIER FIX) ---
-// Pings the server every 5 minutes to prevent idling and filesystem wipe.
-const PING_INTERVAL = 5 * 60 * 1000; // 5 minutes
+// --- AGGRESSIVE ANTI-SLEEP (RENDER FIX) ---
 setInterval(() => {
-    http.get(`http://localhost:${PORT}/api/logs`, (res) => {
-        // Just a touch to keep it alive
-        if (global.connectionStatus === 'READY') {
-            console.log('💓 Heartbeat: Keeping Alex Awake...');
-        }
-    }).on('error', (err) => console.error('Ping Error:', err.message));
-}, PING_INTERVAL);
+    // WebSocket Ping
+    if (sock && sock.ws && sock.ws.readyState === 1) {
+        sock.ws.ping();
+    }
+    // HTTP Self-Ping (to avoid Render idle)
+    http.get(`http://localhost:${PORT}/health`, (res) => {
+        if (global.connectionStatus === 'READY') console.log('💓 Heartbeat: Keeping Alex Awake...');
+    }).on('error', () => { });
+}, 30000); // Every 30s for Render stability
+
