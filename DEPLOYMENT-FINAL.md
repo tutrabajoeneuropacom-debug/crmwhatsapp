@@ -22,7 +22,7 @@ Asegúrate de tener estas variables configuradas en tu Dashboard de Render (Web 
 | `OPENAI_API_KEY` | `Tu API Key` | **Fallback** (Si Gemini falla o para Whisper/TTS) |
 | `SUPABASE_URL` | `https://xxxx.supabase.co` | Persistencia de sesión (Evita escanear QR cada vez) |
 | `SUPABASE_KEY` | `Tu anon key` | Acceso seguro a BD (Sustituye a SERVICE_ROLE) |
-| `PORT` | `3000` | Puerto interno |
+| `NODE_VERSION` | `20.x` | **Recomendado** (Evita warnings de deprecación) |
 
 ---
 
@@ -37,25 +37,27 @@ Ahora puedes controlar a Alex directamente desde el chat (sin afectar a otros us
 | `!closer` | Cambia a modo Cerrador de Ventas. |
 | `!migra` | Cambia a modo Consultor de Migraciones. |
 | `!actual` | Te dice qué personalidad te está atendiendo ahora. |
+| `!status` | Informe técnico del estado del bot (Uptime, RAM, etc). |
+| `!reiniciar` | Fuerza un reinicio manual de la conexión de WhatsApp. |
 | `!reset` | Borra tu historial local para empezar de cero. |
 
 ---
 
-## 💓 4. PREVENCIÓN DE ERROR 408 (TIMEOUT)
+## 💓 4. PREVENCIÓN DE ERROR 408 (DEATH LOOP FIX)
 
-Hemos implementado un sistema de **Triple Heartbeat**:
+Hemos blindado el sistema contra el bucle infinito de reconexión:
 
-1.  **WebSocket Ping (cada 30s):** Mantiene la tubería de Baileys abierta con los servidores de WhatsApp.
-2.  **HTTP Self-Ping (cada 30s):** Golpea el endpoint `/health` propio para evitar que el "Free Tier" de Render se duerma.
-3.  **Presence Updates:** Simula que el bot está "componiendo" brevemente para mantener la sesión viva durante el procesamiento.
+1.  **Reconexión Exponencial:** Si falla, el bot espera 2s, 4s, 8s... hasta un máximo de 30s.
+2.  **Límite de Intentos:** Después de 5 fallos seguidos, el bot entra en **Cooldown** (5 minutos) antes de volver a intentar. Esto evita que Render bloquee tu IP por spam de conexiones.
+3.  **Wipe Controlado:** Solo se borra la sesión local en el primer intento fallido si no hay Supabase.
 
 ---
 
 ## ✅ 5. CÓMO VALIDAR QUE TODO FUNCIONA
 
-1.  **Mira los logs de Render:** Deberías ver `💓 Heartbeat: Keeping Alex Awake...` cada 30 segundos.
-2.  **Prueba el cambio de personalidad:** Envía `!closer` y luego pregunta "¿Cómo me mudo a España?". Debería intentar "cerrarte" una cita.
-3.  **Prueba el Auto-Detección:** Si estás en modo Closer pero preguntas por "marketing", el bot detectará el cambio de tema en logs (aunque no te forzará el cambio para no ser intrusivo).
+1.  **Mira los logs de Render:** Deberías ver `💓 [ALEX] Heartbeat OK` cada 30 segundos.
+2.  **Usa Supabase:** Es la única forma de evitar el Error 408 permanente en Render. Sin Supabase, el bot perderá la sesión en cada despliegue.
+3.  **Actualiza Node:** Configura `NODE_VERSION=20` en Render Settings -> Environment para eliminar los avisos de Supabase.
 
 ---
 **¡Sistema listo para producción! 🎉**

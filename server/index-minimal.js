@@ -83,6 +83,9 @@ let sock;
 global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
 global.currentPersona = 'ALEX_MIGRATION';
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_COOLDOWN = 300000; // 5 minutes
 
 const personas = require('./config/personas');
 const sessionsDir = path.join(__dirname, 'auth_info_baileys');
@@ -372,21 +375,44 @@ async function connectToWhatsApp() {
             console.log(`📡 [ALEX] Closed (${statusCode}). Reconnect: ${shouldReconnect}`);
 
             if (statusCode === 408 || statusCode === 405) {
-                console.error(`🛑 [ALEX] Timeout/Session Error. Restarting with clean state...`);
-                // Only wipe if not using Supabase to avoid infinite loop
-                if (!supabase && fs.existsSync(sessionsDir)) {
-                    try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
+                console.error(`🛑 [ALEX] Timeout/Session Error. Attempting recovery...`);
+                // Only wipe local session if NOT using Supabase to try a fresh start, 
+                // but we limit this to avoid infinite wiping.
+                if (!supabase && reconnectAttempts === 0 && fs.existsSync(sessionsDir)) {
+                    try {
+                        console.log('🧹 [ALEX] Wiping local session for fresh start...');
+                        fs.rmSync(sessionsDir, { recursive: true, force: true });
+                        fs.mkdirSync(sessionsDir, { recursive: true });
+                    } catch (e) { }
                 }
             }
 
             if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 10000);
+                reconnectAttempts++;
+                if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+                    console.error(`❌ [ALEX] Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached.`);
+                    console.error(`⏰ [ALEX] Cooldown for ${RECONNECT_COOLDOWN / 60000} minutes before retrying...`);
+                    setTimeout(() => {
+                        console.log('🔄 [ALEX] Cooldown finished. Retrying connection...');
+                        reconnectAttempts = 0;
+                        connectToWhatsApp();
+                    }, RECONNECT_COOLDOWN);
+                } else {
+                    const delayMs = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                    console.log(`🔄 [ALEX] Reconnecting in ${delayMs / 1000}s (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                    setTimeout(connectToWhatsApp, delayMs);
+                }
             } else {
-                console.error('❌ [ALEX] Logged out.');
-                if (fs.existsSync(sessionsDir)) fs.rmSync(sessionsDir, { recursive: true, force: true });
-                connectToWhatsApp();
+                console.error('❌ [ALEX] Logged out. Manual intervention required.');
+                if (fs.existsSync(sessionsDir)) {
+                    try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
+                }
+                // Don't auto-reconnect on logout to avoid QR spam, 
+                // but in this MVP we might want to anyway if the user is watching.
+                setTimeout(connectToWhatsApp, 5000);
             }
         } else if (connection === 'open') {
+            reconnectAttempts = 0; // Reset attempts on success
             global.connectionStatus = 'READY';
             global.qrCodeUrl = null;
             io.emit('wa_status', { status: 'READY' });
