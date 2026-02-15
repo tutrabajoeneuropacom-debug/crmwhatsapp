@@ -53,13 +53,20 @@ app.get(['/qr-final', '/qr-final**'], (req, res) => {
                         <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">🔄 Actualizar QR</button>
                         <button onclick="window.location.href='/'" style="padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold;">🏠 Dashboard</button>
                     </div>
-                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 12px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 5px 15px; border-radius: 8px; margin-top: 10px;">⚠️ Limpiar Sesión y Reintentar</a>
+                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 11px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 5px 15px; border-radius: 8px; margin-top: 10px; opacity: 0.7;">⚠️ Limpiar Sesión y Reintentar</a>
+                </div>
+
+                <!-- MINI LOGS -->
+                <div style="margin-top: 30px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 15px; width: 100%; max-width: 400px; text-align: left; font-family: monospace; font-size: 11px; border: 1px solid rgba(255,255,255,0.05);">
+                    <p style="color: #4ade80; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px;">📡 EVENTOS EN TIEMPO REAL</p>
+                    ${global.eventLogs.map(l => `<div style="margin-bottom: 4px;"><span style="color: #64748b">[${new Date(l.timestamp).toLocaleTimeString()}]</span> <span style="color: #4ade80">${l.from}:</span> <span style="color: #94a3b8">${l.body}</span></div>`).join('')}
+                    <p style="color: #334155; margin-top: 10px; font-size: 9px;">Server Time: ${new Date().toISOString()}</p>
                 </div>
             </div>
         `);
     } else {
         res.send(`
-            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center; padding: 20px;">
+            <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; text-align: center; padding: 40px 20px;">
                 <h1 style="color: #64748b; margin-bottom: 5px;">⏳ Alex está despertando...</h1>
                 <p style="color: #475569; margin-bottom: 20px;">(Baileys está negociando con la red de WhatsApp)</p>
                 <div style="width: 50px; height: 50px; border: 5px solid #1e293b; border-top-color: #4ade80; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto;"></div>
@@ -68,7 +75,14 @@ app.get(['/qr-final', '/qr-final**'], (req, res) => {
                 <p style="color: #475569; font-size: 14px; max-width: 300px; margin: 15px auto;">Si tardas más de 1 minuto aquí, es posible que la conexión esté saturada.</p>
                 <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px; align-items: center;">
                     <button onclick="window.location.reload()" style="padding: 12px 24px; background: #1e293b; color: white; border: 1px solid #334155; border-radius: 12px; cursor: pointer; font-weight: bold;">🔄 Reintentar Ahora</button>
-                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 12px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 5px 15px; border-radius: 8px; margin-top: 10px;">⚠️ Forzar Reinicio Total</a>
+                    <a href="/whatsapp/restart-direct" style="color: #ef4444; font-size: 11px; text-decoration: none; font-weight: bold; border: 1px solid #ef4444; padding: 5px 15px; border-radius: 8px; margin-top: 10px; opacity: 0.7;">⚠️ Forzar Reinicio Total</a>
+                </div>
+
+                <!-- MINI LOGS -->
+                <div style="margin-top: 30px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 15px; width: 100%; max-width: 400px; text-align: left; font-family: monospace; font-size: 11px; border: 1px solid rgba(255,255,255,0.05);">
+                    <p style="color: #4ade80; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; margin-bottom: 10px;">📡 EVENTOS EN TIEMPO REAL</p>
+                    ${global.eventLogs.length > 0 ? global.eventLogs.map(l => `<div style="margin-bottom: 4px;"><span style="color: #64748b">[${new Date(l.timestamp).toLocaleTimeString()}]</span> <span style="color: #4ade80">${l.from}:</span> <span style="color: #94a3b8">${l.body}</span></div>`).join('') : '<div style="color: #334155;">Esperando actividad...</div>'}
+                    <p style="color: #334155; margin-top: 10px; font-size: 9px;">Server Time: ${new Date().toISOString()}</p>
                 </div>
             </div>
         `);
@@ -124,9 +138,14 @@ let sock;
 global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
 global.currentPersona = 'ALEX_MIGRATION';
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_COOLDOWN = 300000; // 5 minutes
+global.eventLogs = [];
+
+const addEventLog = (body, from = 'SISTEMA') => {
+    const logEntry = { body, from, timestamp: Date.now() };
+    global.eventLogs.unshift(logEntry);
+    if (global.eventLogs.length > 15) global.eventLogs.pop();
+    if (typeof io !== 'undefined') io.emit('wa_log', logEntry);
+};
 
 const personas = require('./config/personas');
 const sessionsDir = path.join(__dirname, 'auth_info_baileys');
@@ -370,24 +389,24 @@ const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || 
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
-    io.emit('wa_log', { body: '🧠 Iniciando Motor Cognitivo...', from: 'SISTEMA', timestamp: Date.now() });
+    addEventLog('🧠 Iniciando Motor Cognitivo...');
     console.log('🧠 [ALEX] Starting Cognitive Engine...');
 
     // 1. SESSION MANAGEMENT (SUPABASE PERSISTENCE)
     let authState;
     if (supabase) {
         console.log('🔗 [ALEX] Persistence enabled (Supabase).');
-        io.emit('wa_log', { body: '🔗 Persistencia habilitada (Supabase)', from: 'SISTEMA', timestamp: Date.now() });
+        addEventLog('🔗 Persistencia habilitada (Supabase)');
         try {
             authState = await useSupabaseAuthState(supabase);
         } catch (e) {
             console.error('❌ [ALEX] Supabase Auth Error:', e.message);
-            io.emit('wa_log', { body: '❌ Error en Supabase: ' + e.message, from: 'SISTEMA', timestamp: Date.now() });
+            addEventLog('❌ Error en Supabase: ' + e.message);
             authState = await useMultiFileAuthState(sessionsDir);
         }
     } else {
         console.warn('⚠️ [ALEX] Persistence DISABLED. Missing SUPABASE_URL/KEY.');
-        io.emit('wa_log', { body: '⚠️ Persistencia local (Sin Supabase)', from: 'SISTEMA', timestamp: Date.now() });
+        addEventLog('⚠️ Persistencia local (Sin Supabase)');
         authState = await useMultiFileAuthState(sessionsDir);
     }
     const { state, saveCreds } = authState;
@@ -417,7 +436,7 @@ async function connectToWhatsApp() {
                 if (!err) {
                     global.qrCodeUrl = url;
                     io.emit('wa_qr', { qr: url });
-                    io.emit('wa_log', { body: '📱 QR Generado. Escanea para conectar.', from: 'WHATSAPP', timestamp: Date.now() });
+                    addEventLog('📱 QR Generado. Escanea para conectar.', 'WHATSAPP');
                 }
             });
         }
@@ -425,7 +444,7 @@ async function connectToWhatsApp() {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log(`📡 [ALEX] Closed (${statusCode}). Reconnect: ${shouldReconnect}`);
-            io.emit('wa_log', { body: `📡 Conexión cerrada (${statusCode}). Reintentando: ${shouldReconnect}`, from: 'SISTEMA', timestamp: Date.now() });
+            addEventLog(`📡 Conexión cerrada (${statusCode}). Reintentando: ${shouldReconnect}`);
 
             if (statusCode === 408 || statusCode === 405) {
                 console.error(`🛑 [ALEX] Timeout/Session Error. Retrying without wiping session folder...`);
@@ -461,7 +480,7 @@ async function connectToWhatsApp() {
             global.connectionStatus = 'READY';
             global.qrCodeUrl = null;
             io.emit('wa_status', { status: 'READY' });
-            io.emit('wa_log', { body: '✅ WhatsApp Conectado y Listo.', from: 'WHATSAPP', timestamp: Date.now() });
+            addEventLog('✅ WhatsApp Conectado y Listo.', 'WHATSAPP');
             console.log('✅ [ALEX] WhatsApp Connected.');
         }
     });
@@ -555,7 +574,7 @@ app.post('/whatsapp/persona', (req, res) => {
 
 app.get('/whatsapp/restart-direct', async (req, res) => {
     console.log('🔄 Forced Restart Triggered via URL');
-    io.emit('wa_log', { body: '🔄 Reinicio forzado por el usuario...', from: 'SISTEMA', timestamp: Date.now() });
+    addEventLog('🔄 Reinicio forzado por el usuario...');
 
     global.connectionStatus = 'DISCONNECTED';
     global.qrCodeUrl = null;
