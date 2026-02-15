@@ -7,7 +7,16 @@ import { QrCode, Cloud, Activity } from 'lucide-react';
 
 const getSocketUrl = () => {
     if (import.meta.env.PROD) {
-        return window.location.origin;
+        if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+
+        if (typeof window !== 'undefined') {
+            const origin = window.location.origin;
+            if (origin.includes('crmwhatsapp-frontend')) {
+                return 'https://crmwhatsapp-1-ggpi.onrender.com';
+            }
+            return origin;
+        }
+        return 'https://crmwhatsapp-1-ggpi.onrender.com';
     }
     return 'http://localhost:3000';
 };

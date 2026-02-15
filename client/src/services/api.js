@@ -1,15 +1,22 @@
 import axios from 'axios';
 
 const getBaseUrl = () => {
-    // Correct Backend URL for WhatsApp CRM
     if (import.meta.env.PROD) {
+        // 1. Prioritize Environment Variable
+        if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+
+        // 2. Intelligent Detection for Render
         if (typeof window !== 'undefined') {
-            return window.location.origin;
+            const origin = window.location.origin;
+            // If we are on the specific frontend service, point to the known backend
+            if (origin.includes('crmwhatsapp-frontend')) {
+                return 'https://crmwhatsapp-1-ggpi.onrender.com';
+            }
+            return origin;
         }
-        return import.meta.env.VITE_API_URL || 'https://crmwhatsapp-1-ggpi.onrender.com';
+        return 'https://crmwhatsapp-1-ggpi.onrender.com';
     }
 
-    // Localhost fallback
     return 'http://localhost:3000';
 };
 
