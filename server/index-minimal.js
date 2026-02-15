@@ -353,13 +353,15 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['Alex v2.0', 'Chrome', '1.0.0'],
+        browser: ['Ubuntu', 'Chrome', '110.0.5481.178'],
         syncFullHistory: false,
-        connectTimeoutMs: 180000,      // 3 minutes for slow Render warmups
-        defaultQueryTimeoutMs: 90000,  // 90s for queries
-        keepAliveIntervalMs: 10000,    // More frequent keep-alive
-        markOnlineOnConnect: false,    // Reduce initial load
+        connectTimeoutMs: 300000,      // 5 minutes (Extreme)
+        defaultQueryTimeoutMs: 120000,  // 2 minutes
+        keepAliveIntervalMs: 5000,     // Very frequent keep-alive
+        markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
+        retryRequestDelayMs: 5000,
+        maxMsgRetryCount: 5,
     });
 
     sock.ev.on('connection.update', (update) => {
