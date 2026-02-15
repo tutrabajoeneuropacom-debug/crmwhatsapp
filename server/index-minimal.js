@@ -44,7 +44,7 @@ app.get(['/qr-final', '/qr-final**'], (req, res) => {
     if (global.qrCodeUrl) {
         res.send(`
             <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; text-align: center;">
-                <h1 style="color: #4ade80">📱 Escanea para conectar a Alex</h1>
+                <h1 style="color: #4ade80">📱 Escanea para conectar a Alexandra</h1>
                 <div style="background: white; padding: 20px; border-radius: 20px; box-shadow: 0 0 50px rgba(74, 222, 128, 0.2);">
                     <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px;" />
                 </div>
@@ -68,7 +68,7 @@ app.get(['/qr-final', '/qr-final**'], (req, res) => {
     } else {
         res.send(`
             <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; text-align: center; padding: 40px 20px;">
-                <h1 style="color: #64748b; margin-bottom: 5px;">⏳ Alex está despertando...</h1>
+                <h1 style="color: #64748b; margin-bottom: 5px;">⏳ Alexandra está despertando...</h1>
                 <p style="color: #475569; margin-bottom: 20px;">(Baileys está negociando con la red de WhatsApp)</p>
                 <div style="width: 50px; height: 50px; border: 5px solid #1e293b; border-top-color: #4ade80; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto;"></div>
                 <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
@@ -165,14 +165,14 @@ const getDynamicPrompt = (userData, recentHistory) => {
     const phase = userData.journeyPhase || 0;
 
     // Base Identity
-    let baseSystem = `Eres **Alex v2.0**, el Arquitecto de Carreras de 'Puentes Globales'. 🌍
+    let baseSystem = `Eres **Alexandra v2.0**, la Arquitecta de Carreras de 'Puentes Globales'. 🌍
     
     **TU IDENTIDAD COGNITIVA:**
-    - No eres un chatbot. Eres un **Estratega Senior**.
+    - No eres un chatbot. Eres una **Estratega Senior**.
     - Tu objetivo NO es vender, es **guiar** al éxito.
     - **Piensas antes de hablar**.
     - No repites preguntas. Si ya tienes el dato, avanza.
-    - Voz: Masculina (Onyx), profunda y segura.
+    - Voz: Femenina (Shimmer/Alloy), suave y profesional.
 
     **TU MAPA MENTAL (ESTADO ACTUAL DEL USUARIO: FASE ${phase}):**
     `;
@@ -253,7 +253,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         const cmd = userText.toLowerCase().trim();
 
         if (cmd === '!ayuda' || cmd === '!help' || cmd === '!personalidades') {
-            let list = "🎭 *Menú de Personalidades Alex v2.0*\n\n";
+            let list = "🎭 *Menú de Personalidades Alexandra v2.0*\n\n";
             Object.values(personas).forEach(p => {
                 list += `${p.emoji} *!${p.id.replace('ALEX_', '').toLowerCase()}*: ${p.role}\n`;
             });
@@ -270,7 +270,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
 
         if (cmd === '!status') {
             const up = Math.floor(process.uptime() / 60);
-            return `📊 *Estado de Alex v2.0*\n\n` +
+            return `📊 *Estado de Alexandra v2.0*\n\n` +
                 `🤖 *Personalidad:* ${personas[user.currentPersona].name}\n` +
                 `📡 *Conexión:* ${global.connectionStatus}\n` +
                 `⏱️ *Uptime:* ${up} minutos\n` +
@@ -304,7 +304,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (userText) {
         const detected = detectPersonalityFromMessage(userText);
         if (detected && detected !== user.currentPersona) {
-            console.log(`🎯 [ALEX] Auto-detected topic: ${detected} for user ${userId}`);
+            console.log(`🎯 [ALEXANDRA] Auto-detected topic: ${detected} for user ${userId}`);
         }
     }
 
@@ -334,7 +334,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         return aiResponse;
     } catch (e) {
         console.error('Brain Error:', e);
-        return "⚠️ Alex está recalibrando sus sistemas... dame un momento.";
+        return "⚠️ Alexandra está recalibrando sus sistemas... dame un momento.";
     }
 }
 
@@ -577,12 +577,12 @@ app.post('/saas/connect', (req, res) => {
 
     // 2. If already connected, confirm it
     if (global.connectionStatus === 'READY') {
-        return res.json({ success: true, message: '✅ Alex Cognitive Engine is Active.' });
+        return res.json({ success: true, message: '✅ Alexandra Cognitive Engine is Active.' });
     }
 
     // 3. If connecting, tell them to wait
     if (global.connectionStatus === 'CONNECTING') {
-        return res.json({ success: false, error: '⏳ Alex está despertando... espera el QR.' });
+        return res.json({ success: false, error: '⏳ Alexandra está despertando... espera el QR.' });
     }
 
     // 4. Default: Start if not running
@@ -660,7 +660,7 @@ app.get('*', (req, res) => {
 
 // START
 connectToWhatsApp();
-server.listen(PORT, () => { console.log(`🚀 Alex v2.0 Live on ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 Alexandra v2.0 Live on ${PORT}`); });
 
 // --- AGGRESSIVE ANTI-SLEEP (RENDER FIX) ---
 setInterval(async () => {
