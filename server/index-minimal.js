@@ -14,6 +14,7 @@ const { createClient } = require('@supabase/supabase-js');
 // --- SERVICES ---
 const whatsappCloudAPI = require('./services/whatsappCloudAPI');
 const { generateResponse, cleanTextForTTS } = require('./services/aiRouter');
+const useSupabaseAuthState = require('./services/supabaseAuthState');
 
 // --- SUPABASE SETUP ---
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -301,34 +302,40 @@ async function speakAlex(id, text) {
 
 
 // --- BAILEYS CONNECTION LOGIC ---
+const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || `http://localhost:${PORT}`;
+
 async function connectToWhatsApp() {
     global.connectionStatus = 'CONNECTING';
     io.emit('wa_status', { status: 'CONNECTING' });
-    console.log('🧠 Starting Alex v2.0 Cognitive Engine...');
+    console.log('🧠 [ALEX] Starting Cognitive Engine...');
 
     // 1. SESSION MANAGEMENT (SUPABASE PERSISTENCE)
     let authState;
     if (supabase) {
-        console.log('🔗 [ALEX] Using Supabase for persistent session storage.');
-        authState = await useSupabaseAuthState(supabase);
+        console.log('🔗 [ALEX] Persistence enabled (Supabase).');
+        try {
+            authState = await useSupabaseAuthState(supabase);
+        } catch (e) {
+            console.error('❌ [ALEX] Supabase Auth Error:', e.message);
+            authState = await useMultiFileAuthState(sessionsDir);
+        }
     } else {
-        console.warn('⚠️ [ALEX] WARNING: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing.');
-        console.warn('⚠️ [ALEX] Sessions will NOT persist. Scan QR again if Render restarts.');
+        console.warn('⚠️ [ALEX] Persistence DISABLED. Missing SUPABASE_URL/KEY.');
+        console.warn('⚠️ [ALEX] Sessions will wipe on Render restart.');
         authState = await useMultiFileAuthState(sessionsDir);
     }
     const { state, saveCreds } = authState;
 
-    // 2. BAILEYS INITIALIZATION (Optimized for Render)
+    // 2. BAILEYS INITIALIZATION
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        // Using standard Ubuntu/Chrome to avoid 405/408 errors
-        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        browser: ['Alex v2.0', 'Chrome', '1.0.0'],
         syncFullHistory: false,
-        connectTimeoutMs: 120000, // Increased to 120s for slow warmups
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 30000,
+        keepAliveIntervalMs: 15000,
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -343,24 +350,28 @@ async function connectToWhatsApp() {
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            console.log(`📡 WhatsApp closed! Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+            console.log(`📡 [ALEX] Closed (${statusCode}). Reconnect: ${shouldReconnect}`);
 
-            if (statusCode === 405 || statusCode === 408) {
-                console.error(`🛑 ERROR ${statusCode} (Session Issue). Wiping and restarting...`);
-                try {
-                    if (fs.existsSync(sessionsDir)) fs.rmSync(sessionsDir, { recursive: true, force: true });
-                } catch (e) { }
-                setTimeout(connectToWhatsApp, 5000);
-            } else if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 5000); // 5s to avoid CPU spikes
+            if (statusCode === 408 || statusCode === 405) {
+                console.error(`🛑 [ALEX] Timeout/Session Error. Restarting with clean state...`);
+                // Only wipe if not using Supabase to avoid infinite loop
+                if (!supabase && fs.existsSync(sessionsDir)) {
+                    try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
+                }
+            }
+
+            if (shouldReconnect) {
+                setTimeout(connectToWhatsApp, 10000);
             } else {
-                console.error('❌ Logged out. Manual scan required.');
-                try { fs.rmSync(sessionsDir, { recursive: true, force: true }); } catch (e) { }
+                console.error('❌ [ALEX] Logged out.');
+                if (fs.existsSync(sessionsDir)) fs.rmSync(sessionsDir, { recursive: true, force: true });
                 connectToWhatsApp();
             }
         } else if (connection === 'open') {
             global.connectionStatus = 'READY';
+            global.qrCodeUrl = null;
             io.emit('wa_status', { status: 'READY' });
+            console.log('✅ [ALEX] WhatsApp Connected.');
         }
     });
 
@@ -475,13 +486,14 @@ server.listen(PORT, () => { console.log(`🚀 Alex v2.0 Live on ${PORT}`); });
 
 // --- AGGRESSIVE ANTI-SLEEP (RENDER FIX) ---
 setInterval(() => {
-    // WebSocket Ping
+    // 1. WebSocket Ping
     if (sock && sock.ws && sock.ws.readyState === 1) {
         sock.ws.ping();
     }
-    // HTTP Self-Ping (to avoid Render idle)
-    http.get(`http://localhost:${PORT}/health`, (res) => {
-        if (global.connectionStatus === 'READY') console.log('💓 Heartbeat: Keeping Alex Awake...');
+    // 2. External Self-Ping (to avoid Render idle)
+    const target = EXTERNAL_URL + '/health';
+    http.get(target, (res) => {
+        if (global.connectionStatus === 'READY') console.log('💓 [ALEX] Heartbeat OK');
     }).on('error', () => { });
-}, 30000); // Every 30s for Render stability
+}, 30000); // Every 30s
 
