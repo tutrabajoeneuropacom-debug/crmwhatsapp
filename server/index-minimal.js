@@ -127,12 +127,24 @@ app.get('/api/webhook/whatsapp', (req, res) => {
 app.post('/api/webhook/whatsapp', async (req, res) => {
     try {
         const messageData = await whatsappCloudAPI.processWebhook(req.body);
-        if (messageData && messageData.text) {
-            const { from, text } = messageData;
+        if (messageData && (messageData.text || messageData.audio)) {
+            const { from, text, audio } = messageData;
             const userId = from.split('@')[0];
-            // Enviar userId para que mantenga la memoria conversacional
-            const replyText = await generateResponse(text, 'ALEX_MIGRATION', userId, []);
-            await whatsappCloudAPI.sendMessage(from, replyText);
+
+            // Proceso cognitivo detectando si es audio o texto
+            const result = await generateResponse(text || "Mensaje de audio recibido", 'ALEX_MIGRATION', userId, []);
+
+            // Emitir al dashboard el uso de API
+            const billingInfo = result.isPaid ? '💸 PAGO' : '🍃 GRATIS';
+            addEventLog(`🧠 Cerebro: ${result.source.toUpperCase()} | ${billingInfo}`, 'SISTEMA');
+
+            if (audio) {
+                // REGLA ESTRICTA: Si es audio, no enviamos texto desde aquí para evitar duplicados con Baileys.
+                console.log(`🎤 Audio recibido en Cloud API de ${from}. Silenciando respuesta de texto.`);
+                // (Opcional) Aquí podríamos implementar whatsappCloudAPI.sendAudio si quisiéramos audio vía canal oficial.
+            } else {
+                await whatsappCloudAPI.sendMessage(from, result.response);
+            }
         }
         res.sendStatus(200);
     } catch (e) {
@@ -350,12 +362,17 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (user.chatLog.length > 20) user.chatLog = user.chatLog.slice(-20);
 
     try {
-        const aiResponse = await generateResponse(processedText, user.currentPersona, userId, user.chatLog);
-        user.chatLog.push({ role: 'assistant', content: aiResponse });
-        return aiResponse;
+        const aiResult = await generateResponse(processedText, user.currentPersona, userId, user.chatLog);
+        user.chatLog.push({ role: 'assistant', content: aiResult.response });
+
+        // Agregar logs de uso para el dashboard
+        const billingInfo = aiResult.isPaid ? '💸 PAGO' : '🍃 GRATIS';
+        addEventLog(`🧠 Cerebro: ${aiResult.source} | ${billingInfo}`, 'SISTEMA');
+
+        return aiResult;
     } catch (e) {
         console.error('Brain Error:', e);
-        return "⚠️ Alexandra está recalibrando sus sistemas... dame un momento.";
+        return { response: "⚠️ Alexandra está recalibrando sus sistemas... dame un momento.", source: 'error', isPaid: false };
     }
 }
 
@@ -601,16 +618,17 @@ async function connectToWhatsApp() {
 
                     // 🧠 CORE COGNITIVE PROCESS
                     try {
-                        const response = await processMessageAleX(id, text, audioBuffer);
+                        const result = await processMessageAleX(id, text, audioBuffer);
 
-                        // SI EL USUARIO MANDÓ AUDIO (O ALGO QUE PARECE AUDIO REAL)
-                        if (audioMsg && (audioMsg.url || audioMsg.directPath)) {
+                        // SI EL USUARIO MANDÓ AUDIO -> RESPONDE CON AUDIO
+                        if (audioMsg) {
                             console.log(`🎤 Entrada de audio detectada para ${id}. Respondiendo ÚNICAMENTE con voz.`);
-                            await speakAlex(id, response);
-                        } else {
-                            // SI ES TEXTO O CUALQUIER OTRA COSA
+                            await speakAlex(id, result.response);
+                        }
+                        // SI NO ES AUDIO MANDÓ TEXTO -> RESPONDE CON TEXTO
+                        else {
                             console.log(`💬 Entrada de texto detectada para ${id}. Respondiendo ÚNICAMENTE con texto.`);
-                            await sock.sendMessage(id, { text: response });
+                            await sock.sendMessage(id, { text: result.response });
                         }
 
                     } catch (err) {

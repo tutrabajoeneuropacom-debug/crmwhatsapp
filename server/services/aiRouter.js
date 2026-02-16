@@ -34,9 +34,9 @@ function detectPersonalityFromMessage(message) {
 // --- Main Text Generation Function ---
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', userId = 'default', explicitHistory = []) {
     let responseText = null;
+    let usageSource = 'none';
 
     // PRIORIDAD 0: Cerebro Programador Externo (ALEX-DEV-v1)
-    // EFICIENCIA DE COSTOS: Solo llamamos al Cerebro si la consulta es técnica o compleja.
     const isTechnicalQuery = (msg) => {
         const techKeywords = ['arquitectura', 'hexagonal', 'código', 'error', 'prisma', 'fastify', 'backend', 'refactor', 'clean code', 'base de datos', 'api'];
         return techKeywords.some(k => msg.toLowerCase().includes(k)) || msg.length > 100;
@@ -53,13 +53,12 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 timeout: 15000
             });
             responseText = brainRes.data.response;
+            usageSource = 'alex-brain';
             console.log(`✅ [aiRouter] Respuesta obtenida del Cerebro Programador`);
-            if (responseText) return responseText;
+            if (responseText) return { response: responseText, source: usageSource };
         } catch (brainError) {
             console.warn(`⚠️ [aiRouter] Falló el Cerebro Programador (${brainError.message}). Usando lógica local...`);
         }
-    } else if (personaKey === 'ALEX_DEV') {
-        console.log(`🍃 [aiRouter] Consulta simple/no-técnica. Resolviendo localmente con Gemini Flash para ahorrar tokens.`);
     }
 
     // Select Persona
@@ -70,13 +69,9 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
     const temperature = currentPersona.temperature || 0.7;
     const maxTokens = currentPersona.maxTokens || 500;
 
-    // 1. GESTIÓN DE MEMORIA (Recuperar hilo anterior)
+    // 1. GESTIÓN DE MEMORIA
     const previousChat = conversationMemory.get(userId) || [];
-
-    // Combinar historial explícito con memoria interna (limitar a 10 para ahorrar tokens)
     const combinedHistory = [...previousChat, ...explicitHistory].slice(-10);
-
-    console.log(`🧠 [aiRouter] Persona: ${currentPersona.name} (${personaKey}) | Usuario: ${userId}`);
 
     // 2. PRIORIDAD 1: Gemini 1.5 Flash (Gratuito)
     if (GENAI_API_KEY && GENAI_API_KEY.length > 10) {
@@ -88,7 +83,6 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 systemInstruction: systemPrompt
             });
 
-            // --- FIX: Formateo estricto y alternancia de roles para Gemini ---
             let chatHistory = [];
             let lastRole = null;
 
@@ -98,7 +92,6 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 if (!text.trim()) continue;
 
                 if (role === lastRole) {
-                    // Combinar mensajes consecutivos del mismo rol
                     chatHistory[chatHistory.length - 1].parts[0].text += "\n" + text;
                 } else {
                     chatHistory.push({ role: role, parts: [{ text: text }] });
@@ -106,15 +99,8 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 }
             }
 
-            // REGLA 1: Debe empezar con 'user'
-            while (chatHistory.length > 0 && chatHistory[0].role !== 'user') {
-                chatHistory.shift();
-            }
-
-            // REGLA 2: Debe terminar con 'model' (porque el siguiente es 'user' en sendMessage)
-            while (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'user') {
-                chatHistory.pop();
-            }
+            while (chatHistory.length > 0 && chatHistory[0].role !== 'user') chatHistory.shift();
+            while (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'user') chatHistory.pop();
 
             const chat = model.startChat({
                 history: chatHistory,
@@ -123,66 +109,68 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
             const result = await chat.sendMessage(userMessage);
             responseText = result.response.text();
-            console.log(`✅ [aiRouter] Éxito con Gemini 1.5 Flash`);
+            usageSource = 'gemini-flash';
+            console.log(`✅ [aiRouter] Éxito con Gemini 1.5 Flash (Gratis)`);
 
         } catch (error) {
-            console.error(`⚠️ [aiRouter] Gemini falló (Status ${error.status || 'ERR'}): ${error.message}`);
-
-            // Reintento rápido con modelo alternativo si es 404
+            console.error(`⚠️ [aiRouter] Gemini falló: ${error.message}`);
             if (error.message.includes('not found') || error.status === 404) {
-                console.log("🔄 [aiRouter] Reintentando con gemini-1.5-pro...");
                 try {
                     const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
                     const modelAlt = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
                     const result = await modelAlt.generateContent(userMessage);
                     responseText = result.response.text();
-                    console.log(`✅ [aiRouter] Éxito con Gemini (Modelo Pro)`);
+                    usageSource = 'gemini-pro';
+                    console.log(`✅ [aiRouter] Éxito con Gemini Pro`);
                 } catch (e2) {
-                    console.error("❌ [aiRouter] Reintento fallido:", e2.message);
+                    console.error("❌ [aiRouter] Reintento Gemini fallido");
                 }
             }
-            console.error("❌ [aiRouter] Reintento fallido:", e2.message);
         }
     }
-}
+
+    // 3. FALLBACK: OpenAI (Si Gemini falla o no hay Key)
+    if (!responseText && OPENAI_API_KEY) {
+        try {
+            console.log("🔄 [aiRouter] Backup: Usando OpenAI (PAGO)...");
+            const res = await axios.post('https://api.openai.com/v1/chat/completions', {
+                model: "gpt-4o-mini",
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body })),
+                    { role: "user", content: userMessage }
+                ],
+                temperature,
+                max_tokens: maxTokens
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 25000
+            });
+            responseText = res.data.choices[0].message.content;
+            usageSource = 'openai-mini';
+            console.log(`✅ [aiRouter] Éxito con OpenAI Backup (Pago)`);
+        } catch (openaiError) {
+            console.error("❌ [aiRouter] Backup OpenAI también falló:", openaiError.message);
+        }
     }
 
-// 3. FALLBACK: OpenAI (Si Gemini falla o no hay Key)
-if (!responseText && OPENAI_API_KEY) {
-    try {
-        console.log("🔄 [aiRouter] Backup: Usando OpenAI...");
-        const res = await axios.post('https://api.openai.com/v1/chat/completions', {
-            model: "gpt-4o-mini",
-            messages: [
-                { role: "system", content: systemPrompt },
-                ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body })),
-                { role: "user", content: userMessage }
-            ],
-            temperature,
-            max_tokens: maxTokens
-        }, {
-            headers: {
-                'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 25000
-        });
-        responseText = res.data.choices[0].message.content;
-        console.log(`✅ [aiRouter] Éxito con OpenAI Backup`);
-    } catch (openaiError) {
-        console.error("❌ [aiRouter] Backup OpenAI también falló:", openaiError.message);
+    const finalResponse = responseText || "Alex está teniendo un momento de reflexión técnica. Dame un minuto y volvemos.";
+
+    if (responseText) {
+        const newHistory = [...combinedHistory];
+        newHistory.push({ role: 'user', content: userMessage });
+        newHistory.push({ role: 'assistant', content: finalResponse });
+        conversationMemory.set(userId, newHistory.slice(-10));
     }
-}
 
-if (responseText) {
-    // Guardar en memoria para el siguiente mensaje
-    const newHistory = [...combinedHistory];
-    newHistory.push({ role: 'user', content: userMessage });
-    newHistory.push({ role: 'assistant', content: responseText });
-    conversationMemory.set(userId, newHistory.slice(-10));
-}
-
-return responseText || "Alex está teniendo un momento de reflexión técnica. Dame un minuto y volvemos.";
+    return {
+        response: finalResponse,
+        source: usageSource,
+        isPaid: (usageSource === 'openai-mini' || usageSource === 'gemini-pro')
+    };
 }
 
 /**
@@ -204,5 +192,3 @@ module.exports = {
     cleanTextForTTS,
     detectPersonalityFromMessage
 };
-
-
