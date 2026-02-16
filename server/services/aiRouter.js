@@ -36,10 +36,15 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
     let responseText = null;
 
     // PRIORIDAD 0: Cerebro Programador Externo (ALEX-DEV-v1)
-    // Si la persona es ALEX_DEV y tenemos el cerebro configurado, delegar a él.
-    if (personaKey === 'ALEX_DEV' && BRAIN_URL) {
+    // EFICIENCIA DE COSTOS: Solo llamamos al Cerebro si la consulta es técnica o compleja.
+    const isTechnicalQuery = (msg) => {
+        const techKeywords = ['arquitectura', 'hexagonal', 'código', 'error', 'prisma', 'fastify', 'backend', 'refactor', 'clean code', 'base de datos', 'api'];
+        return techKeywords.some(k => msg.toLowerCase().includes(k)) || msg.length > 100;
+    };
+
+    if (personaKey === 'ALEX_DEV' && BRAIN_URL && isTechnicalQuery(userMessage)) {
         try {
-            console.log(`🧠 [aiRouter] Delegando al Cerebro Programador: ${BRAIN_URL}`);
+            console.log(`🧠 [aiRouter] Consulta técnica detectada. Delegando al Cerebro: ${BRAIN_URL}`);
             const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
                 userId: userId,
                 message: userMessage
@@ -53,6 +58,8 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
         } catch (brainError) {
             console.warn(`⚠️ [aiRouter] Falló el Cerebro Programador (${brainError.message}). Usando lógica local...`);
         }
+    } else if (personaKey === 'ALEX_DEV') {
+        console.log(`🍃 [aiRouter] Consulta simple/no-técnica. Resolviendo localmente con Gemini Flash para ahorrar tokens.`);
     }
 
     // Select Persona
