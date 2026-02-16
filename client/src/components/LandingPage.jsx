@@ -16,14 +16,14 @@ const LandingPage = () => {
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
                 </div>
 
-                <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight bg-gradient-to-r from-green-400 to-emerald-600 bg-clip-text text-transparent pb-2">
-                    WhatsApp SaaS
+                <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight bg-gradient-to-r from-blue-400 to-indigo-600 bg-clip-text text-transparent pb-2">
+                    Alex IO v5.1
                 </h1>
 
                 <p className="text-xl md:text-2xl text-slate-400 max-w-2xl mx-auto leading-relaxed">
-                    Automatización inteligente de Leads para Emprendedores.
+                    Orquestador Cognitivo para WhatsApp & Ventas.
                     <br />
-                    <span className="text-sm uppercase tracking-widest text-slate-500 mt-2 block">CRM Integration • Auto-Reply • Live Monitoring</span>
+                    <span className="text-sm uppercase tracking-widest text-slate-500 mt-2 block">Resilience • Cost Control • Multi-AI Switch</span>
                 </p>
 
                 <div className="flex flex-col md:flex-row gap-4 justify-center items-center mt-8">
@@ -38,7 +38,7 @@ const LandingPage = () => {
             </div>
 
             <footer className="absolute bottom-6 text-slate-600 text-sm">
-                &copy; 2026 WhatsApp SaaS Core • Powered by Render & Supabase
+                &copy; 2026 Alex IO Core • Powered by v5.1 Architecture
             </footer>
         </div>
     );
