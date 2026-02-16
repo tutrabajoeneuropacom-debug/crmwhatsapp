@@ -134,8 +134,9 @@ app.post('/api/webhook/whatsapp', async (req, res) => {
             // Proceso cognitivo detectando si es audio o texto
             const result = await generateResponse(text || "Mensaje de audio recibido", 'ALEX_MIGRATION', userId, []);
 
-            // Emitir al dashboard el uso de API
-            addEventLog(`🧠 Cerebro: ${result.source} | ${result.tier}`, 'SISTEMA');
+            // Emitir al dashboard el uso de API (v5.1 con métricas)
+            const m = result.metrics;
+            addEventLog(`🧠 Cerebro: ${result.source} | ${result.tier} (${m.tokens.total} tk | $${m.cost} | ${m.responseTime}ms)`, 'SISTEMA');
 
             if (audio) {
                 // REGLA ESTRICTA: Si es audio, no enviamos texto desde aquí para evitar duplicados con Baileys.
@@ -364,8 +365,9 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         const aiResult = await generateResponse(processedText, user.currentPersona, userId, user.chatLog);
         user.chatLog.push({ role: 'assistant', content: aiResult.response });
 
-        // Agregar logs de uso para el dashboard
-        addEventLog(`🧠 Cerebro: ${aiResult.source} | ${aiResult.tier}`, 'SISTEMA');
+        // Agregar logs de uso para el dashboard (v5.1 con métricas)
+        const m = aiResult.metrics;
+        addEventLog(`🧠 Cerebro: ${aiResult.source} | ${aiResult.tier} (${m.tokens.total} tk | $${m.cost} | ${m.responseTime}ms)`, 'SISTEMA');
 
         return aiResult;
     } catch (e) {

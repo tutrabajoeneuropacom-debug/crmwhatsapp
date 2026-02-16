@@ -2,6 +2,14 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require('axios');
 require('dotenv').config();
 
+// --- Configuración de Precios (v5.1) ---
+const PRICES = {
+    'gemini-flash': { input: 0, output: 0 }, // FREE
+    'deepseek': { input: 0.0000001, output: 0.0000002 }, // LOW COST (Estimado)
+    'openai-mini': { input: 0.00000015, output: 0.0000006 }, // PAID
+    'alex-brain': { input: 0.000001, output: 0.000002 } // PRO
+};
+
 // --- Robust Key Cleaning ---
 const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g, '').replace(/["']/g, '');
 
@@ -16,6 +24,14 @@ const personas = require('../config/personas');
 // Memoria volátil
 const conversationMemory = new Map();
 
+/**
+ * Estimación de Tokens (1 token ≈ 4 caracteres según Constitución v5.1)
+ */
+function estimateTokens(text) {
+    if (!text) return 0;
+    return Math.ceil(text.length / 4);
+}
+
 function detectPersonalityFromMessage(message) {
     if (!message) return null;
     const messageLC = message.toLowerCase();
@@ -28,6 +44,14 @@ function detectPersonalityFromMessage(message) {
 }
 
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', userId = 'default', explicitHistory = []) {
+    const startTime = Date.now();
+    let responseText = null;
+    let usageSource = 'none';
+    let retryCount = 0;
+    let fallbackUsed = false;
+    let inputTokens = estimateTokens(userMessage);
+    let outputTokens = 0;
+
     // 1. SELECT PERSONA & TONE
     const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
     const systemPrompt = `RECUERDA: Eres Alex de Alex IO. NO eres un chatbot común. Actúa como el experto asignado. ` + currentPersona.systemPrompt;
@@ -39,62 +63,61 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
     const previousChat = conversationMemory.get(userId) || [];
     const combinedHistory = [...previousChat, ...explicitHistory].slice(-10);
 
-    let responseText = null;
-    let usageSource = 'none';
-
     // Helper: Detect Technical query
     const isTechnicalQuery = (msg) => {
         const techKeywords = ['arquitectura', 'hexagonal', 'código', 'error', 'prisma', 'fastify', 'backend', 'refactor', 'clean code', 'base de datos', 'api', 'dev', 'bug', 'javascript', 'python', 'node'];
         return techKeywords.some(k => msg.toLowerCase().includes(k)) || msg.length > 400;
     };
 
-    console.log(`🧠 [aiRouter] Procesando mensaje para ${userId} (${personaKey}). Technical: ${isTechnicalQuery(userMessage)}`);
+    console.log(`🧠 [Alex IO] Procesando mensaje para ${userId}.`);
 
-    // --- FLUJO DE DECISIÓN (CONSTITUCIÓN v5.0) ---
+    // --- FLUJO OFICIAL DE DECISIÓN (v5.1) ---
 
-    // FASE 1: GEMINI FLASH (GRATIS - PRINCIPAL)
+    // FASE 1: GEMINI FLASH (GRATIS)
     if (!responseText && GENAI_API_KEY) {
-        try {
-            console.log(`🤖 [aiRouter] Intentando Gemini Flash 1.5...`);
-            const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-            const model = genAI.getGenerativeModel({
-                model: "gemini-1.5-flash",
-                systemInstruction: systemPrompt
-            });
+        const tryGemini = async (isRetry = false) => {
+            try {
+                console.log(`🤖 [Alex IO] Intentando Gemini Flash 1.5${isRetry ? ' (RETRY)' : ''}...`);
+                const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
+                const model = genAI.getGenerativeModel({
+                    model: "gemini-1.5-flash",
+                    systemInstruction: systemPrompt
+                });
 
-            // Convert history to Gemini format
-            let chatHistory = [];
-            for (const msg of combinedHistory) {
-                const role = msg.role === 'user' ? 'user' : 'model';
-                const text = String(msg.content || msg.body || msg.text || "");
-                if (text.trim()) {
-                    chatHistory.push({ role: role, parts: [{ text: text }] });
+                let chatHistory = [];
+                for (const msg of combinedHistory) {
+                    const role = msg.role === 'user' ? 'user' : 'model';
+                    const text = String(msg.content || msg.body || msg.text || "");
+                    if (text.trim()) chatHistory.push({ role: role, parts: [{ text: text }] });
                 }
+
+                const chat = model.startChat({
+                    history: chatHistory.slice(-6),
+                    generationConfig: { temperature, maxOutputTokens: maxTokens }
+                });
+
+                const result = await chat.sendMessage(userMessage);
+                responseText = result.response.text();
+                usageSource = 'gemini-flash';
+                return true;
+            } catch (error) {
+                console.error(`❌ [Alex IO] Gemini falló: ${error.message}`);
+                return false;
             }
+        };
 
-            // Fix: Role alternating and starting with user
-            if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'model') {
-                // Gemini supports this usually, but let's be safe
+        if (!(await tryGemini())) {
+            retryCount++;
+            if (!(await tryGemini(true))) {
+                fallbackUsed = true;
             }
-
-            const chat = model.startChat({
-                history: chatHistory.slice(-6), // Limit history for stability
-                generationConfig: { temperature, maxOutputTokens: maxTokens }
-            });
-
-            const result = await chat.sendMessage(userMessage);
-            responseText = result.response.text();
-            usageSource = 'gemini-flash';
-            console.log(`✅ [aiRouter] Gemini Flash respondió.`);
-        } catch (error) {
-            console.error(`❌ [aiRouter] Gemini Falló: ${error.message}`);
         }
     }
 
-    // FASE 2: DEEPSEEK (GRATIS/LOW COST)
+    // FASE 2: DEEPSEEK (LOW COST)
     if (!responseText && DEEPSEEK_API_KEY) {
         try {
-            console.log("🔄 [aiRouter] Intentando DeepSeek...");
+            console.log("🔄 [Alex IO] Fallback a DeepSeek...");
             const res = await axios.post('https://api.deepseek.com/chat/completions', {
                 model: "deepseek-chat",
                 messages: [
@@ -110,16 +133,16 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
             });
             responseText = res.data.choices[0].message.content;
             usageSource = 'deepseek';
-            console.log(`✅ [aiRouter] DeepSeek respondió.`);
         } catch (dsError) {
-            console.error("❌ [aiRouter] DeepSeek Falló:", dsError.message);
+            console.error("❌ [Alex IO] DeepSeek falló:", dsError.message);
+            fallbackUsed = true;
         }
     }
 
-    // FASE 3: ALEX-BRAIN (PRO - SOLO PARA TÉCNICO SI FALLA LO GRATIS)
+    // FASE 3: ALEX-BRAIN (PRO - SOLO TÉCNICO)
     if (!responseText && BRAIN_URL && isTechnicalQuery(userMessage)) {
         try {
-            console.log(`🧠 [aiRouter] Delegando a Alex-Brain PRO (Fallback técnico)...`);
+            console.log(`🧠 [Alex IO] Escalando a Alex-Brain PRO...`);
             const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
                 userId: userId,
                 message: userMessage
@@ -129,21 +152,21 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
             });
             responseText = brainRes.data.response;
             usageSource = 'alex-brain';
-            console.log(`✅ [aiRouter] Alex-Brain respondió.`);
         } catch (brainError) {
-            console.error(`❌ [aiRouter] Alex-Brain PRO Falló.`);
+            console.error(`❌ [Alex IO] Alex-Brain PRO falló.`);
+            fallbackUsed = true;
         }
     }
 
-    // FASE 4: OPENAI (PAGO - ÚLTIMO RECURSO)
+    // FASE 4: OPENAI (PAGO - GARANTÍA FINAL)
     if (!responseText && OPENAI_API_KEY) {
         try {
-            console.log("🔄 [aiRouter] Final Fallback: OpenAI GPT-4o-mini...");
+            console.log("🔄 [Alex IO] Último Recurso: OpenAI GPT-4o-mini...");
             const res = await axios.post('https://api.openai.com/v1/chat/completions', {
                 model: "gpt-4o-mini",
                 messages: [
                     { role: "system", content: systemPrompt },
-                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body || h.text })),
+                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body || h.text || "" })),
                     { role: "user", content: userMessage }
                 ],
                 temperature,
@@ -154,13 +177,18 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
             });
             responseText = res.data.choices[0].message.content;
             usageSource = 'openai-mini';
-            console.log(`✅ [aiRouter] OpenAI respondió.`);
         } catch (oaError) {
-            console.error("❌ [aiRouter] Todos los motores fallaron.");
+            console.error("❌ [Alex IO] Todos los motores fallaron.");
         }
     }
 
     const finalResponse = responseText || "Alex IO está procesando tu solicitud, dame un momento.";
+    outputTokens = estimateTokens(finalResponse);
+    const responseTime = Date.now() - startTime;
+
+    // Cálculo de Costo (v5.1)
+    const pricing = PRICES[usageSource] || { input: 0, output: 0 };
+    const cost = (inputTokens * pricing.input) + (outputTokens * pricing.output);
 
     // Update Memory
     if (responseText) {
@@ -171,13 +199,21 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
     }
 
     let tierLabel = '🍃 GRATIS';
+    if (usageSource === 'deepseek') tierLabel = '🍃 LOW COST';
     if (usageSource === 'openai-mini') tierLabel = '💸 PAGO';
     if (usageSource === 'alex-brain') tierLabel = '🚀 PRO';
 
     return {
         response: finalResponse,
         source: usageSource,
-        tier: tierLabel
+        tier: tierLabel,
+        metrics: {
+            tokens: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
+            cost: cost.toFixed(6),
+            responseTime: responseTime,
+            retryCount: retryCount,
+            fallbackUsed: fallbackUsed
+        }
     };
 }
 
