@@ -7,6 +7,8 @@ const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g,
 
 const GENAI_API_KEY = cleanKey(process.env.GEMINI_API_KEY);
 const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
+const BRAIN_URL = process.env.ALEX_BRAIN_URL; // URL del nuevo cerebro ALEX-DEV-v1
+const BRAIN_KEY = process.env.ALEX_BRAIN_KEY || process.env.API_KEY;
 
 const personas = require('../config/personas');
 
@@ -32,6 +34,26 @@ function detectPersonalityFromMessage(message) {
 // --- Main Text Generation Function ---
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', userId = 'default', explicitHistory = []) {
     let responseText = null;
+
+    // PRIORIDAD 0: Cerebro Programador Externo (ALEX-DEV-v1)
+    // Si la persona es ALEX_DEV y tenemos el cerebro configurado, delegar a él.
+    if (personaKey === 'ALEX_DEV' && BRAIN_URL) {
+        try {
+            console.log(`🧠 [aiRouter] Delegando al Cerebro Programador: ${BRAIN_URL}`);
+            const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
+                userId: userId,
+                message: userMessage
+            }, {
+                headers: { 'x-api-key': BRAIN_KEY },
+                timeout: 15000
+            });
+            responseText = brainRes.data.response;
+            console.log(`✅ [aiRouter] Respuesta obtenida del Cerebro Programador`);
+            if (responseText) return responseText;
+        } catch (brainError) {
+            console.warn(`⚠️ [aiRouter] Falló el Cerebro Programador (${brainError.message}). Usando lógica local...`);
+        }
+    }
 
     // Select Persona
     const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
