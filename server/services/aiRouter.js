@@ -130,56 +130,59 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
             // Reintento rápido con modelo alternativo si es 404
             if (error.message.includes('not found') || error.status === 404) {
-                console.log("🔄 [aiRouter] Reintentando con gemini-1.5-flash-latest...");
+                console.log("🔄 [aiRouter] Reintentando con gemini-1.5-pro...");
                 try {
                     const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-                    const modelAlt = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+                    const modelAlt = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
                     const result = await modelAlt.generateContent(userMessage);
                     responseText = result.response.text();
-                    console.log(`✅ [aiRouter] Éxito con Gemini (Modelo alternativo)`);
+                    console.log(`✅ [aiRouter] Éxito con Gemini (Modelo Pro)`);
                 } catch (e2) {
                     console.error("❌ [aiRouter] Reintento fallido:", e2.message);
                 }
             }
+            console.error("❌ [aiRouter] Reintento fallido:", e2.message);
         }
     }
-
-    // 3. FALLBACK: OpenAI (Si Gemini falla o no hay Key)
-    if (!responseText && OPENAI_API_KEY) {
-        try {
-            console.log("🔄 [aiRouter] Backup: Usando OpenAI...");
-            const res = await axios.post('https://api.openai.com/v1/chat/completions', {
-                model: "gpt-4o-mini",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body })),
-                    { role: "user", content: userMessage }
-                ],
-                temperature,
-                max_tokens: maxTokens
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000
-            });
-            responseText = res.data.choices[0].message.content;
-            console.log(`✅ [aiRouter] Éxito con OpenAI Backup`);
-        } catch (openaiError) {
-            console.error("❌ [aiRouter] Backup OpenAI también falló:", openaiError.message);
-        }
+}
     }
 
-    if (responseText) {
-        // Guardar en memoria para el siguiente mensaje
-        const newHistory = [...combinedHistory];
-        newHistory.push({ role: 'user', content: userMessage });
-        newHistory.push({ role: 'assistant', content: responseText });
-        conversationMemory.set(userId, newHistory.slice(-10));
+// 3. FALLBACK: OpenAI (Si Gemini falla o no hay Key)
+if (!responseText && OPENAI_API_KEY) {
+    try {
+        console.log("🔄 [aiRouter] Backup: Usando OpenAI...");
+        const res = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model: "gpt-4o-mini",
+            messages: [
+                { role: "system", content: systemPrompt },
+                ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body })),
+                { role: "user", content: userMessage }
+            ],
+            temperature,
+            max_tokens: maxTokens
+        }, {
+            headers: {
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 25000
+        });
+        responseText = res.data.choices[0].message.content;
+        console.log(`✅ [aiRouter] Éxito con OpenAI Backup`);
+    } catch (openaiError) {
+        console.error("❌ [aiRouter] Backup OpenAI también falló:", openaiError.message);
     }
+}
 
-    return responseText || "Alex está teniendo un momento de reflexión técnica. Dame un minuto y volvemos.";
+if (responseText) {
+    // Guardar en memoria para el siguiente mensaje
+    const newHistory = [...combinedHistory];
+    newHistory.push({ role: 'user', content: userMessage });
+    newHistory.push({ role: 'assistant', content: responseText });
+    conversationMemory.set(userId, newHistory.slice(-10));
+}
+
+return responseText || "Alex está teniendo un momento de reflexión técnica. Dame un minuto y volvemos.";
 }
 
 /**

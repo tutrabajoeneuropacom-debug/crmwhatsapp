@@ -484,11 +484,12 @@ async function connectToWhatsApp() {
         logger: pino({ level: 'silent' }),
         browser: ['Mac OS', 'Chrome', '110.0.5481.178'],
         syncFullHistory: false,
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000,
+        connectTimeoutMs: 120000,
+        defaultQueryTimeoutMs: 120000,
+        keepAliveIntervalMs: 30000,
         markOnlineOnConnect: true,
         generateHighQualityLinkPreview: false,
+        retryRequestDelayMs: 5000,
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -602,13 +603,13 @@ async function connectToWhatsApp() {
                     try {
                         const response = await processMessageAleX(id, text, audioBuffer);
 
-                        if (audioMsg) {
-                            // Si el usuario envió audio, respondemos con audio
-                            console.log(`🎤 Entrada de audio detectada para ${id}. Respondiendo con voz.`);
+                        // SI EL USUARIO MANDÓ AUDIO (O ALGO QUE PARECE AUDIO REAL)
+                        if (audioMsg && (audioMsg.url || audioMsg.directPath)) {
+                            console.log(`🎤 Entrada de audio detectada para ${id}. Respondiendo ÚNICAMENTE con voz.`);
                             await speakAlex(id, response);
                         } else {
-                            // Si el usuario envió texto, respondemos con texto
-                            console.log(`💬 Entrada de texto detectada para ${id}. Respondiendo con texto.`);
+                            // SI ES TEXTO O CUALQUIER OTRA COSA
+                            console.log(`💬 Entrada de texto detectada para ${id}. Respondiendo ÚNICAMENTE con texto.`);
                             await sock.sendMessage(id, { text: response });
                         }
 
