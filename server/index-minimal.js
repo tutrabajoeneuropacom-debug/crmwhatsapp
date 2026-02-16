@@ -139,12 +139,22 @@ app.post('/api/webhook/whatsapp', async (req, res) => {
             addEventLog(`🧠 Cerebro: ${result.source} | ${result.tier} (${m.tokens.total} tk | $${m.cost} | ${m.responseTime}ms)`, 'SISTEMA');
 
             if (audio) {
-                // REGLA ESTRICTA: Si es audio, no enviamos texto desde aquí para evitar duplicados con Baileys.
-                console.log(`🎤 Audio recibido en Cloud API de ${from}. Silenciando respuesta de texto.`);
-                // (Opcional) Aquí podríamos implementar whatsappCloudAPI.sendAudio si quisiéramos audio vía canal oficial.
+                // ... audio logic ...
             } else {
                 await whatsappCloudAPI.sendMessage(from, result.response);
             }
+
+            // Registrar en usageStats para el Admin Dashboard
+            global.usageStats.unshift({
+                id: Date.now(),
+                created_at: new Date().toISOString(),
+                input_text: text || "Audio",
+                response_text: result.response,
+                source: result.source,
+                tier: result.tier,
+                metrics: result.metrics
+            });
+            if (global.usageStats.length > 50) global.usageStats.pop();
         }
         res.sendStatus(200);
     } catch (e) {
@@ -164,6 +174,7 @@ global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
 global.currentPersona = 'ALEX_DEV';
 global.eventLogs = [];
+global.usageStats = []; // v5.1: Track detailed metrics for dashboard
 
 const addEventLog = (body, from = 'SISTEMA') => {
     const logEntry = { body, from, timestamp: Date.now() };
@@ -368,6 +379,18 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         // Agregar logs de uso para el dashboard (v5.1 con métricas)
         const m = aiResult.metrics;
         addEventLog(`🧠 Cerebro: ${aiResult.source} | ${aiResult.tier} (${m.tokens.total} tk | $${m.cost} | ${m.responseTime}ms)`, 'SISTEMA');
+
+        // Registrar en usageStats
+        global.usageStats.unshift({
+            id: Date.now(),
+            created_at: new Date().toISOString(),
+            input_text: processedText,
+            response_text: aiResult.response,
+            source: aiResult.source,
+            tier: aiResult.tier,
+            metrics: m
+        });
+        if (global.usageStats.length > 50) global.usageStats.pop();
 
         return aiResult;
     } catch (e) {
@@ -675,9 +698,33 @@ app.post('/whatsapp/persona', (req, res) => {
     const { persona } = req.body;
     if (personas[persona]) {
         global.currentPersona = persona;
+        addEventLog(`👤 Persona cambiada a: ${persona}`, 'SISTEMA');
         return res.json({ success: true, persona: persona });
     }
     res.status(400).json({ success: false, error: 'Persona invalid' });
+});
+
+app.get('/admin/stats', (req, res) => {
+    const totalCost = global.usageStats.reduce((acc, curr) => acc + parseFloat(curr.metrics.cost), 0);
+    const deepseekCount = global.usageStats.filter(s => s.source === 'deepseek').length;
+
+    res.json({
+        summary: {
+            total_cost_window: totalCost,
+            deepseek_usage_pct: global.usageStats.length > 0 ? Math.round((deepseekCount / global.usageStats.length) * 100) : 0,
+            cache_hits: 0, // Placeholder
+            total_requests: global.usageStats.length
+        },
+        logs: global.usageStats.map(s => ({
+            id: s.id,
+            created_at: s.created_at,
+            input_text: s.input_text,
+            translated_text: s.response_text.substring(0, 50) + '...',
+            cost_estimated: s.metrics.cost,
+            provider_llm: s.source,
+            tier: s.tier
+        }))
+    });
 });
 
 app.get('/whatsapp/logout', async (req, res) => {

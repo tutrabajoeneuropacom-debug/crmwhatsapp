@@ -30,6 +30,8 @@ const WhatsAppConnect = () => {
     const [cloudStatus, setCloudStatus] = useState({ configured: false });
     const [logs, setLogs] = useState([]);
 
+    const [persona, setPersona] = useState('ALEX_MIGRATION');
+
     useEffect(() => {
         // Initial Status Checks
         fetchStatus();
@@ -64,8 +66,18 @@ const WhatsAppConnect = () => {
             const res = await api.get('/whatsapp/status');
             setStatus(res.data.status);
             if (res.data.qr) setQrCode(res.data.qr);
+            if (res.data.persona) setPersona(res.data.persona);
         } catch (e) {
             console.error("Failed to fetch WA status", e);
+        }
+    };
+
+    const handlePersonaChange = async (newPersona) => {
+        try {
+            await api.post('/whatsapp/persona', { persona: newPersona });
+            setPersona(newPersona);
+        } catch (e) {
+            alert("Error al cambiar persona");
         }
     };
 
@@ -89,9 +101,25 @@ const WhatsAppConnect = () => {
     return (
         <div className="min-h-screen bg-slate-900 text-white p-6 font-sans">
             <h1 className="text-3xl font-bold mb-2 text-center bg-gradient-to-r from-green-400 to-emerald-600 bg-clip-text text-transparent">
-                WhatsApp Command Center
+                Alex IO v5.1 Dashboard
             </h1>
-            <p className="text-center text-slate-500 mb-8 text-sm">Gestiona la conexión de tus agentes IA</p>
+            <p className="text-center text-slate-500 mb-8 text-sm">Control de Inteligencia y Consumo en Tiempo Real</p>
+
+            {/* PERSONA SWITCHER */}
+            <div className="flex justify-center mb-6 gap-4">
+                <button
+                    onClick={() => handlePersonaChange('ALEX_MIGRATION')}
+                    className={`px-6 py-2 rounded-xl font-bold border transition-all ${persona === 'ALEX_MIGRATION' ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+                >
+                    🌍 MIGRACIONES
+                </button>
+                <button
+                    onClick={() => handlePersonaChange('ALEX_DEV')}
+                    className={`px-6 py-2 rounded-xl font-bold border transition-all ${persona === 'ALEX_DEV' ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+                >
+                    💻 SISTEMAS
+                </button>
+            </div>
 
             {/* MODE SELECTOR */}
             <div className="flex justify-center mb-8 bg-slate-800/50 p-1 rounded-2xl max-w-sm mx-auto border border-slate-700">
@@ -166,7 +194,7 @@ const WhatsAppConnect = () => {
                     <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
                         <div className="flex items-center gap-3">
                             <div className="w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
-                            <span className="text-slate-400 font-bold tracking-tighter">COGNITIVE LOGS (ALEX)</span>
+                            <span className="text-slate-400 font-bold tracking-tighter">COGNITIVE LOGS & CONSUMPTION</span>
                         </div>
                     </div>
 
@@ -180,10 +208,10 @@ const WhatsAppConnect = () => {
                         {logs.map((log, i) => (
                             <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} key={i} className="border-l-2 border-slate-700 pl-4 py-2 hover:bg-slate-900/50 transition-colors rounded-r-lg group">
                                 <div className="flex justify-between mb-1">
-                                    <span className="text-cyan-500 font-bold group-hover:text-cyan-400">{log.from.split('@')[0]}</span>
+                                    <span className={`font-bold ${log.from === 'SISTEMA' ? 'text-yellow-500' : 'text-cyan-500'}`}>{log.from.split('@')[0]}</span>
                                     <span className="text-[10px] text-slate-600">{new Date(log.timestamp).toLocaleTimeString()}</span>
                                 </div>
-                                <p className="text-slate-400 group-hover:text-slate-200 transition-colors leading-relaxed">{log.body}</p>
+                                <p className={`leading-relaxed ${log.from === 'SISTEMA' ? 'text-slate-300 italic' : 'text-slate-400'}`}>{log.body}</p>
                             </motion.div>
                         ))}
                     </div>
