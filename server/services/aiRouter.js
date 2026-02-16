@@ -7,6 +7,7 @@ const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g,
 
 const GENAI_API_KEY = cleanKey(process.env.GEMINI_API_KEY);
 const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
+const DEEPSEEK_API_KEY = cleanKey(process.env.DEEPSEEK_API_KEY);
 const BRAIN_URL = process.env.ALEX_BRAIN_URL; // URL del nuevo cerebro ALEX-DEV-v1
 const BRAIN_KEY = process.env.ALEX_BRAIN_KEY || process.env.API_KEY;
 
@@ -55,7 +56,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
             responseText = brainRes.data.response;
             usageSource = 'alex-brain';
             console.log(`✅ [aiRouter] Respuesta obtenida del Cerebro Programador`);
-            if (responseText) return { response: responseText, source: usageSource };
+            if (responseText) return { response: responseText, source: usageSource, tier: '🚀 PRO' };
         } catch (brainError) {
             console.warn(`⚠️ [aiRouter] Falló el Cerebro Programador (${brainError.message}). Usando lógica local...`);
         }
@@ -63,7 +64,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
     // Select Persona
     const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
-    let systemPrompt = `RECUERDA: Eres Alexandra v2.0 de Puentes Globales. NO eres un chatbot común. ` + currentPersona.systemPrompt;
+    let systemPrompt = `RECUERDA: Eres Alex de Alex IO. NO eres un chatbot común. ` + currentPersona.systemPrompt;
 
     // Config values from persona
     const temperature = currentPersona.temperature || 0.7;
@@ -114,22 +115,38 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
         } catch (error) {
             console.error(`⚠️ [aiRouter] Gemini falló: ${error.message}`);
-            if (error.message.includes('not found') || error.status === 404) {
-                try {
-                    const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-                    const modelAlt = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
-                    const result = await modelAlt.generateContent(userMessage);
-                    responseText = result.response.text();
-                    usageSource = 'gemini-pro';
-                    console.log(`✅ [aiRouter] Éxito con Gemini Pro`);
-                } catch (e2) {
-                    console.error("❌ [aiRouter] Reintento Gemini fallido");
-                }
-            }
         }
     }
 
-    // 3. FALLBACK: OpenAI (Si Gemini falla o no hay Key)
+    // 3. PRIORIDAD 2: DeepSeek (Gratuito/Económico)
+    if (!responseText && DEEPSEEK_API_KEY) {
+        try {
+            console.log("🔄 [aiRouter] Intentando DeepSeek...");
+            const res = await axios.post('https://api.deepseek.com/chat/completions', {
+                model: "deepseek-chat",
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body })),
+                    { role: "user", content: userMessage }
+                ],
+                temperature,
+                max_tokens: maxTokens
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 20000
+            });
+            responseText = res.data.choices[0].message.content;
+            usageSource = 'deepseek';
+            console.log(`✅ [aiRouter] Éxito con DeepSeek (Gratis)`);
+        } catch (deepSeekError) {
+            console.error("❌ DeepSeek falló:", deepSeekError.message);
+        }
+    }
+
+    // 4. FALLBACK: OpenAI (Si Gemini/DeepSeek falla o no hay Key)
     if (!responseText && OPENAI_API_KEY) {
         try {
             console.log("🔄 [aiRouter] Backup: Usando OpenAI (PAGO)...");
@@ -157,7 +174,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
         }
     }
 
-    const finalResponse = responseText || "Alex está teniendo un momento de reflexión técnica. Dame un minuto y volvemos.";
+    const finalResponse = responseText || "Alex IO está procesando tu solicitud...";
 
     if (responseText) {
         const newHistory = [...combinedHistory];
@@ -166,10 +183,14 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
         conversationMemory.set(userId, newHistory.slice(-10));
     }
 
+    let tierLabel = '🍃 GRATIS';
+    if (usageSource === 'openai-mini') tierLabel = '💸 PAGO';
+    if (usageSource === 'alex-brain') tierLabel = '🚀 PRO';
+
     return {
         response: finalResponse,
         source: usageSource,
-        isPaid: (usageSource === 'openai-mini' || usageSource === 'gemini-pro')
+        tier: tierLabel
     };
 }
 

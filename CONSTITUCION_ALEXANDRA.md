@@ -1,44 +1,59 @@
-# 📜 Constitución del Sistema Alexandra v2.0
+# 📜 CONSTITUCIÓN OFICIAL DEL SISTEMA ALEX IO v5.0
 
-Este documento define las leyes fundamentales y la arquitectura del sistema conversacional de **Alexandra**.
+Sistema Conversacional WhatsApp – Ventas & Atención al Cliente
 
-## ⚖️ Leyes de Interacción (Modos Espejo)
+## I. PROPÓSITO
 
-1.  **Ley de Simetría de Formato**: Alexandra SIEMPRE debe responder en el mismo formato que recibió.
-    *   Si el usuario envía **TEXTO** ➡️ Alexandra responde únicamente con **TEXTO**.
-    *   Si el usuario envía **AUDIO** ➡️ Alexandra responde únicamente con **AUDIO** (OGG/Opus).
-2.  **Ley de Transparencia de Cerebro**: Todo proceso cognitivo debe ser registrado. El Dashboard mostrará qué API se utilizó y si representó un costo (Pago vs Gratis).
+Alex IO es un sistema conversacional modular para WhatsApp diseñado para:
+- Atender clientes.
+- Apoyar procesos de venta.
+- Escalar consultas complejas.
+- Optimizar el uso de modelos de IA.
+- Garantizar continuidad operativa.
+- Controlar y monitorear el gasto en tiempo real.
 
-## 🏗️ Estructura del Sistema
+**Alex IO** no es solo un chatbot. Es un orquestador cognitivo con control de costo, resiliencia y observabilidad completa.
 
-El sistema está dividido en 4 capas modulares:
+## II. LEYES FUNDAMENTALES
 
-### 1. Capa Cognitiva (`server/services/aiRouter.js`)
-Es el "Cerebro" que decide qué IA utilizar basándose en la complejidad:
-*   **Fase 1 (Alex-Brain)**: Se activa para consultas técnicas o complejas (Arquitectura, Código). Es el motor de razonamiento superior.
-*   **Fase 2 (Gemini Flash)**: Motor principal por defecto. Es gratuito, rápido y eficiente para conversaciones generales.
-*   **Fase 3 (OpenAI Fallback)**: Se activa automáticamente si Gemini falla o está saturado. Es un motor de pago (Garantía de servicio).
+### 1️⃣ Ley de Simetría de Formato (Modo Espejo)
+Alex IO debe responder en el mismo formato que recibe:
+- **TEXTO** → **TEXTO**
+- **AUDIO** → **AUDIO** (OGG/Opus compatible WhatsApp)
+No se permite mezclar formatos salvo configuración explícita.
 
-### 2. Capa de Orquestación (`server/index-minimal.js`)
-Gestor de tráfico que une las piezas:
-*   Maneja las conexiones simultáneas (WhatsApp QR via Baileys y WhatsApp Oficial via Meta).
-*   Aplica la **Ley de Simetría** (Detecta `audioMsg` vs `text`).
-*   Informa al Dashboard en tiempo real mediante Sockets.
+### 2️⃣ Ley de Transparencia Cognitiva
+Cada interacción debe registrar en el Dashboard:
+- `🧠 Cerebro: gemini-flash | 🍃 GRATIS`
+- `🧠 Cerebro: deepseek | 🍃 GRATIS`
+- `🧠 Cerebro: openai-mini | 💸 PAGO`
+- `🧠 Cerebro: alex-brain | 🚀 PRO`
 
-### 3. Capa de Salida de Voz (`speakAlex`)
-Transforma los pensamientos (texto) en voz humana:
-*   Utiliza **OpenAI Onyx** (Pago) o **Google TTS** (Gratis) como respaldo.
-*   Realiza una conversión forzada a **OGG/Opus** para asegurar que el audio se reproduzca como "Mensaje de voz" nativo en WhatsApp.
+### 3️⃣ Ley de Optimización Conservadora
+El sistema debe:
+- Usar el modelo más barato que cumpla la tarea.
+- No escalar a motores de pago por defecto.
+- Escalar solo cuando sea estrictamente necesario.
+- Priorizar margen y estabilidad sobre performance máxima.
 
-### 4. Capa de Persistencia (`supabaseAuthState.js`)
-Asegura que Alexandra no "olvide" quién es ni pierda la conexión cuando el servidor se reinicia, guardando las credenciales de forma segura en Supabase.
+### 4️⃣ Ley de Respuesta Garantizada
+El usuario nunca debe quedar sin respuesta. Si todos los motores fallan, se debe enviar una respuesta segura predefinida.
+
+## III. ARQUITECTURA MODULAR OBLIGATORIA
+Sigue el patrón de capas:
+- `/domain`: Reglas de negocio y lógica determinística.
+- `/services`: Orquestador, AI Router y registro de costos.
+- `/adapters`: Integraciones con Gemini, DeepSeek, OpenAI y WhatsApp.
+- `/api`: Webhooks y comunicación externa.
+
+## V. JERARQUÍA DE MOTORES IA
+1. **Rule-based**
+2. **Gemini Flash 1.5** / **DeepSeek** (Motores principales GRATIS)
+3. **OpenAI fallback** (Garantía de servicio PAGO)
+4. **Alex-Brain** (Consultas técnicas PRO)
+
+## XI. IDENTIDAD DEL SISTEMA
+Alex IO es modular, costo-consciente, resiliente y auditante. Nunca improvisa arquitectura ni deja al usuario sin respuesta.
 
 ---
-
-## 📊 Monitoreo en Dashboard
-Ahora, cada vez que Alexandra responde, verás en la consola del Dashboard:
-*   `🧠 Cerebro: gemini-flash | 🍃 GRATIS`
-*   `🧠 Cerebro: openai-mini | 💸 PAGO`
-*   `🧠 Cerebro: alex-brain | 🚀 PRO`
-
-Esto permite un control total sobre el consumo de tokens y la calidad de las respuestas.
+**ESTADO:** Aprobado para implementación inmediata.

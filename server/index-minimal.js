@@ -135,8 +135,7 @@ app.post('/api/webhook/whatsapp', async (req, res) => {
             const result = await generateResponse(text || "Mensaje de audio recibido", 'ALEX_MIGRATION', userId, []);
 
             // Emitir al dashboard el uso de API
-            const billingInfo = result.isPaid ? '💸 PAGO' : '🍃 GRATIS';
-            addEventLog(`🧠 Cerebro: ${result.source.toUpperCase()} | ${billingInfo}`, 'SISTEMA');
+            addEventLog(`🧠 Cerebro: ${result.source} | ${result.tier}`, 'SISTEMA');
 
             if (audio) {
                 // REGLA ESTRICTA: Si es audio, no enviamos texto desde aquí para evitar duplicados con Baileys.
@@ -366,8 +365,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         user.chatLog.push({ role: 'assistant', content: aiResult.response });
 
         // Agregar logs de uso para el dashboard
-        const billingInfo = aiResult.isPaid ? '💸 PAGO' : '🍃 GRATIS';
-        addEventLog(`🧠 Cerebro: ${aiResult.source} | ${billingInfo}`, 'SISTEMA');
+        addEventLog(`🧠 Cerebro: ${aiResult.source} | ${aiResult.tier}`, 'SISTEMA');
 
         return aiResult;
     } catch (e) {
