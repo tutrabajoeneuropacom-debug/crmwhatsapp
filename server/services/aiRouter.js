@@ -101,7 +101,11 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 usageSource = 'gemini-flash';
                 return true;
             } catch (error) {
-                console.error(`❌ [Alex IO] Gemini falló: ${error.message}`);
+                const msg = error.message || "";
+                console.error(`❌ [Alex IO] Gemini falló: ${msg}`);
+                if (msg.includes("expired") || msg.includes("key")) {
+                    addEventLog(`⚠️ Gemini: API Key Expirada o Inválida`, 'SISTEMA');
+                }
                 return false;
             }
         };
@@ -135,6 +139,9 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
             usageSource = 'deepseek';
         } catch (dsError) {
             console.error("❌ [Alex IO] DeepSeek falló:", dsError.message);
+            if (dsError.response && dsError.response.status === 402) {
+                addEventLog(`⚠️ DeepSeek: Sin saldo (Error 402)`, 'SISTEMA');
+            }
             fallbackUsed = true;
         }
     }
