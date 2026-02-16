@@ -1,4 +1,4 @@
-// Deploy Trigger: 2026-02-15 17:18 (Force Render Sync)
+// Deploy Trigger: 2026-02-16 13:45 (Force Render Sync - Alex IO v5.1)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -131,8 +131,8 @@ app.post('/api/webhook/whatsapp', async (req, res) => {
             const { from, text, audio } = messageData;
             const userId = from.split('@')[0];
 
-            // Proceso cognitivo detectando si es audio o texto
-            const result = await generateResponse(text || "Mensaje de audio recibido", 'ALEX_MIGRATION', userId, []);
+            // Proceso cognitivo utilizando la persona global seleccionada
+            const result = await generateResponse(text || "Mensaje de audio recibido", global.currentPersona || 'ALEX_MIGRATION', userId, []);
 
             // Emitir al dashboard el uso de API (v5.1 con métricas)
             const m = result.metrics;
