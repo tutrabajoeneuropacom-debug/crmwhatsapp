@@ -34,34 +34,6 @@ function detectPersonalityFromMessage(message) {
 
 // --- Main Text Generation Function ---
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', userId = 'default', explicitHistory = []) {
-    let responseText = null;
-    let usageSource = 'none';
-
-    // PRIORIDAD 0: Cerebro Programador Externo (ALEX-DEV-v1)
-    const isTechnicalQuery = (msg) => {
-        const techKeywords = ['arquitectura', 'hexagonal', 'código', 'error', 'prisma', 'fastify', 'backend', 'refactor', 'clean code', 'base de datos', 'api'];
-        return techKeywords.some(k => msg.toLowerCase().includes(k)) || msg.length > 100;
-    };
-
-    if (personaKey === 'ALEX_DEV' && BRAIN_URL && isTechnicalQuery(userMessage)) {
-        try {
-            console.log(`🧠 [aiRouter] Consulta técnica detectada. Delegando al Cerebro: ${BRAIN_URL}`);
-            const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
-                userId: userId,
-                message: userMessage
-            }, {
-                headers: { 'x-api-key': BRAIN_KEY },
-                timeout: 15000
-            });
-            responseText = brainRes.data.response;
-            usageSource = 'alex-brain';
-            console.log(`✅ [aiRouter] Respuesta obtenida del Cerebro Programador`);
-            if (responseText) return { response: responseText, source: usageSource, tier: '🚀 PRO' };
-        } catch (brainError) {
-            console.warn(`⚠️ [aiRouter] Falló el Cerebro Programador (${brainError.message}). Usando lógica local...`);
-        }
-    }
-
     // Select Persona
     const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
     let systemPrompt = `RECUERDA: Eres Alex de Alex IO. NO eres un chatbot común. ` + currentPersona.systemPrompt;
@@ -74,7 +46,16 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
     const previousChat = conversationMemory.get(userId) || [];
     const combinedHistory = [...previousChat, ...explicitHistory].slice(-10);
 
-    // 2. PRIORIDAD 1: Gemini 1.5 Flash (Gratuito)
+    let responseText = null;
+    let usageSource = 'none';
+
+    // Helper: Detect Technical query
+    const isTechnicalQuery = (msg) => {
+        const techKeywords = ['arquitectura', 'hexagonal', 'código', 'error', 'prisma', 'fastify', 'backend', 'refactor', 'clean code', 'base de datos', 'api', 'dev', 'bug'];
+        return techKeywords.some(k => msg.toLowerCase().includes(k)) || msg.length > 500;
+    };
+
+    // 2. PRIORIDAD 1: Gemini 1.5 Flash (Gratuito) - AHORA MANEJA TODO PRIMERO
     if (GENAI_API_KEY && GENAI_API_KEY.length > 10) {
         try {
             console.log(`🤖 [aiRouter] Intentando Gemini Flash 1.5 (PRINCIPAL)...`);
@@ -146,7 +127,27 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
         }
     }
 
-    // 4. FALLBACK: OpenAI (Si Gemini/DeepSeek falla o no hay Key)
+    // 4. PRIORIDAD 3: Cerebro Programador Externo (ALEX-BRAIN PRO) 
+    // Ahora es fallback para temas técnicos si las gratuitas no responden
+    if (!responseText && BRAIN_URL && isTechnicalQuery(userMessage)) {
+        try {
+            console.log(`🧠 [aiRouter] Usando Alex-Brain como Fallback PRO: ${BRAIN_URL}`);
+            const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
+                userId: userId,
+                message: userMessage
+            }, {
+                headers: { 'x-api-key': BRAIN_KEY },
+                timeout: 15000
+            });
+            responseText = brainRes.data.response;
+            usageSource = 'alex-brain';
+            console.log(`✅ [aiRouter] Respuesta obtenida del Cerebro Programador`);
+        } catch (brainError) {
+            console.warn(`⚠️ [aiRouter] Falló el Cerebro Programador en Fallback.`);
+        }
+    }
+
+    // 5. FINAL FALLBACK: OpenAI (Si todo lo anterior falla)
     if (!responseText && OPENAI_API_KEY) {
         try {
             console.log("🔄 [aiRouter] Backup: Usando OpenAI (PAGO)...");
