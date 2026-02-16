@@ -14,6 +14,8 @@ const pino = require('pino');
 const OpenAI = require('openai');
 const googleTTS = require('google-tts-api');
 const { createClient } = require('@supabase/supabase-js');
+const ffmpeg = require('fluent-ffmpeg');
+const { PassThrough } = require('stream');
 // --- SERVICES ---
 const whatsappCloudAPI = require('./services/whatsappCloudAPI');
 const { generateResponse, cleanTextForTTS, detectPersonalityFromMessage } = require('./services/aiRouter');
@@ -148,7 +150,7 @@ let sock;
 let isConnecting = false;
 global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
-global.currentPersona = 'ALEX_MIGRATION';
+global.currentPersona = 'ALEX_DEV';
 global.eventLogs = [];
 
 const addEventLog = (body, from = 'SISTEMA') => {
@@ -239,7 +241,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         userDatabase[userId] = {
             name: 'Candidato',
             chatLog: [],
-            currentPersona: 'ALEX_MIGRATION',
+            currentPersona: 'ALEX_DEV',
             lastMessageTime: 0,
             messageCount: 0
         };
@@ -357,7 +359,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     }
 }
 
-// 4. VOICE ENGINE (TTS - Onyx Cleaned)
+// 4. VOICE ENGINE (TTS - OGG/Opus Fixed for WhatsApp)
 async function speakAlex(id, text) {
     if (!text) return;
 
@@ -378,36 +380,64 @@ async function speakAlex(id, text) {
         await sock.sendPresenceUpdate('recording', id);
 
         // VOICE GENERATION LOOP
-        let voiced = false;
+        let voicedBuffer = null;
 
         // 1. Try OPENAI TTS (Onyx)
         if (OPENAI_API_KEY) {
             try {
+                console.log("🎙️ Generando voz con OpenAI (Onyx)...");
                 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
                 const mp3 = await openai.audio.speech.create({
                     model: "tts-1",
                     voice: "onyx",
                     input: cleanText.substring(0, 4096)
                 });
-                const buffer = Buffer.from(await mp3.arrayBuffer());
-                await sock.sendMessage(id, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
-                voiced = true;
+                voicedBuffer = Buffer.from(await mp3.arrayBuffer());
             } catch (err) {
                 console.error('⚠️ OpenAI TTS failed:', err.message);
             }
         }
 
         // 2. Google Fallback (if OpenAI fails or missing)
-        if (!voiced) {
-            console.log("🔊 Fallback to Google TTS...");
+        if (!voicedBuffer) {
+            console.log("🔊 Fallback a Google TTS...");
             const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es', slow: false });
-            for (const item of results) {
-                const buffer = Buffer.from(item.base64, 'base64');
-                await sock.sendMessage(id, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
+            if (results && results.length > 0) {
+                // Unimos todos los fragmentos en un solo Buffer
+                voicedBuffer = Buffer.concat(results.map(item => Buffer.from(item.base64, 'base64')));
             }
         }
+
+        if (voicedBuffer) {
+            // 🛠️ CONVERSIÓN A OGG/OPUS (WhatsApp Compatibility)
+            console.log("🔄 Convirtiendo audio a OGG/Opus para WhatsApp...");
+
+            const inputStream = new PassThrough();
+            inputStream.end(voicedBuffer);
+
+            const resultBuffer = await new Promise((resolve, reject) => {
+                const chunks = [];
+                const outputStream = new PassThrough();
+
+                ffmpeg(inputStream)
+                    .toFormat('ogg')
+                    .audioCodec('libopus')
+                    .on('error', (err) => reject(err))
+                    .pipe(outputStream);
+
+                outputStream.on('data', chunk => chunks.push(chunk));
+                outputStream.on('end', () => resolve(Buffer.concat(chunks)));
+            });
+
+            await sock.sendMessage(id, {
+                audio: resultBuffer,
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true
+            });
+            console.log("✅ Audio enviado correctamente (OGG/Opus)");
+        }
     } catch (e) {
-        console.error('Voice failed:', e);
+        console.error('❌ Error en el motor de voz:', e);
     } finally {
         await sock.sendPresenceUpdate('paused', id);
     }
@@ -572,11 +602,15 @@ async function connectToWhatsApp() {
                     try {
                         const response = await processMessageAleX(id, text, audioBuffer);
 
-                        // Reply Text
-                        await sock.sendMessage(id, { text: response });
-
-                        // Reply Voice
-                        await speakAlex(id, response);
+                        if (audioMsg) {
+                            // Si el usuario envió audio, respondemos con audio
+                            console.log(`🎤 Entrada de audio detectada para ${id}. Respondiendo con voz.`);
+                            await speakAlex(id, response);
+                        } else {
+                            // Si el usuario envió texto, respondemos con texto
+                            console.log(`💬 Entrada de texto detectada para ${id}. Respondiendo con texto.`);
+                            await sock.sendMessage(id, { text: response });
+                        }
 
                     } catch (err) {
                         console.error('Brain Error:', err);

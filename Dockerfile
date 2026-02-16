@@ -15,9 +15,12 @@ RUN npm run build
 FROM node:18-alpine
 WORKDIR /app/server
 
+# Instalar dependencias del sistema (FFmpeg para conversión de audio)
+RUN apk add --no-cache ffmpeg
+
 # Copy server package files
 COPY server/package*.json ./
-RUN npm install --production
+RUN npm install
 
 # Copy server source code
 COPY server/ .
