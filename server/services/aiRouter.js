@@ -309,9 +309,23 @@ async function generateAudio(text) {
     if (!text) return null;
     const voice = process.env.TTS_VOICE || "onyx";
 
-    // 1. OpenAI TTS (High Quality)
+    // 1. Google Fallback (Free/Stable - User Priority)
+    try {
+        const googleTTS = require('google-tts-api');
+        const url = googleTTS.getAudioUrl(text, { lang: 'es', host: 'https://translate.google.com' });
+        const audioRes = await axios.get(url, { responseType: 'arraybuffer' });
+        if (audioRes.data) {
+            console.log("🔊 Usando Voz de Google (Gratis)...");
+            return Buffer.from(audioRes.data).toString('base64');
+        }
+    } catch (e) {
+        console.warn(`⚠️ [aiRouter] Google TTS failed, following to OpenAI...`);
+    }
+
+    // 2. OpenAI TTS (High Quality - Fallback)
     if (OPENAI_API_KEY) {
         try {
+            console.log("🎙️ Usando Voz de OpenAI (Onyx/Premiun)...");
             const response = await axios({
                 method: 'post',
                 url: 'https://api.openai.com/v1/audio/speech',
@@ -326,15 +340,6 @@ async function generateAudio(text) {
         }
     }
 
-    // 2. Fallback to Google Translate
-    try {
-        const googleTTS = require('google-tts-api');
-        const url = googleTTS.getAudioUrl(text, { lang: 'es', host: 'https://translate.google.com' });
-        const audioRes = await axios.get(url, { responseType: 'arraybuffer' });
-        return Buffer.from(audioRes.data).toString('base64');
-    } catch (e) {
-        console.error(`❌ [aiRouter] All TTS providers failed.`);
-    }
     return null;
 }
 
