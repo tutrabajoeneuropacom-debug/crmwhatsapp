@@ -1,14 +1,21 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require('axios');
+const { MIGRATION_OPERATIONAL_CONSTITUTION, MIGRATION_SYSTEM_PROMPT_V1 } = require('../config/migrationPrompt');
 require('dotenv').config();
 
 // --- Configuración de Precios (v5.1) ---
 const PRICES = {
     'gemini-flash': { input: 0, output: 0 }, // FREE
-    'deepseek': { input: 0.0000001, output: 0.0000002 }, // LOW COST (Estimado)
     'openai-mini': { input: 0.00000015, output: 0.0000006 }, // PAID
+    'deepseek': { input: 0.0000001, output: 0.0000002 }, // LOW COST
     'alex-brain': { input: 0.000001, output: 0.000002 } // PRO
 };
+
+// --- Timeouts ---
+const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS) || 15000;
+const DEEPSEEK_TIMEOUT_MS = parseInt(process.env.DEEPSEEK_TIMEOUT_MS) || 15000;
+const BRAIN_TIMEOUT_MS = parseInt(process.env.BRAIN_TIMEOUT_MS) || 20000;
+const OPENAI_TIMEOUT_MS = parseInt(process.env.OPENAI_TIMEOUT_MS) || 25000;
 
 // --- Robust Key Cleaning ---
 const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g, '').replace(/["']/g, '');
@@ -21,11 +28,62 @@ const BRAIN_KEY = process.env.ALEX_BRAIN_KEY || process.env.API_KEY;
 
 const personas = require('../config/personas');
 
-// Memoria volátil
+// Memoria volátil y estado estructurado
 const conversationMemory = new Map();
+const conversationState = new Map();
 
 /**
- * Estimación de Tokens (1 token ≈ 4 caracteres según Constitución v5.1)
+ * Utilidad de Timeout
+ */
+async function withTimeout(promise, ms, name = "Task") {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`TIMEOUT: ${name} superó los ${ms}ms`)), ms);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+}
+
+/**
+ * Extrae variables del usuario para el estado estructurado
+ */
+function extractUserState(message, userId) {
+    if (!message) return;
+    const state = conversationState.get(userId) || { variables: {} };
+    const messageLC = message.toLowerCase();
+
+    // Mapeo simple de variables mencionadas
+    const keywords = {
+        tecnico: ['tecnico', 'programador', 'developer', 'senior', 'junior'],
+        ingles: ['ingles', 'a1', 'a2', 'b1', 'b2', 'c1', 'c2'],
+        destino: ['españa', 'alemania', 'portugal', 'italia', 'europa'],
+        motivacion: ['familia', 'crecer', 'dinero', 'seguridad', 'vivienda']
+    };
+
+    for (const [variable, keys] of Object.entries(keywords)) {
+        if (keys.some(k => messageLC.includes(k))) {
+            state.variables[variable] = keys.find(k => messageLC.includes(k));
+        }
+    }
+
+    conversationState.set(userId, state);
+}
+
+/**
+ * Construye el contexto de memoria basado en el estado
+ */
+function buildMemoryContext(userId) {
+    const state = conversationState.get(userId);
+    if (!state || Object.keys(state.variables).length === 0) return "";
+
+    let context = "\n--- VARIABLES DETECTADAS ---\n";
+    for (const [key, val] of Object.entries(state.variables)) {
+        context += `${key.toUpperCase()}: ${val}\n`;
+    }
+    return context;
+}
+
+/**
+ * Estimación de Tokens
  */
 function estimateTokens(text) {
     if (!text) return 0;
@@ -45,45 +103,47 @@ function detectPersonalityFromMessage(message) {
 
 async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', userId = 'default', explicitHistory = []) {
     const startTime = Date.now();
+    const normalizedUserMsg = userMessage || "";
     let responseText = null;
     let usageSource = 'none';
     let retryCount = 0;
     let fallbackUsed = false;
-    let inputTokens = estimateTokens(userMessage);
+    let inputTokens = estimateTokens(normalizedUserMsg);
     let outputTokens = 0;
 
-    // 1. SELECT PERSONA & TONE
+    // 1. SELECT PERSONA & GOVERNANCE
     const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
-    const systemPrompt = `RECUERDA: Eres Alex de Alex IO. NO eres un chatbot común. Actúa como el experto asignado. ` + currentPersona.systemPrompt;
+    let systemPrompt = `RECUERDA: Eres ALEX. Tu identidad es fija. ` + currentPersona.systemPrompt;
+
+    if (personaKey === 'ALEX_MIGRATION') {
+        systemPrompt = MIGRATION_SYSTEM_PROMPT_V1 + "\n\n" + MIGRATION_OPERATIONAL_CONSTITUTION;
+    }
+
+    // 2. MEMORY & CONTEXT
+    extractUserState(normalizedUserMsg, userId);
+    const memoryContext = buildMemoryContext(userId);
+
+    const previousChat = conversationMemory.get(userId) || [];
+    const combinedHistory = [...previousChat, ...explicitHistory].slice(-10);
 
     const temperature = currentPersona.temperature || 0.7;
     const maxTokens = currentPersona.maxTokens || 500;
 
-    // 2. HISTORY MANAGEMENT
-    const previousChat = conversationMemory.get(userId) || [];
-    const combinedHistory = [...previousChat, ...explicitHistory].slice(-10);
+    console.log(`🧠 [ALEX IO] Procesando para ${userId} usando ${personaKey}.`);
 
-    // Helper: Detect Technical query
-    const isTechnicalQuery = (msg) => {
-        const techKeywords = ['arquitectura', 'hexagonal', 'código', 'error', 'prisma', 'fastify', 'backend', 'refactor', 'clean code', 'base de datos', 'api', 'dev', 'bug', 'javascript', 'python', 'node'];
-        return techKeywords.some(k => msg.toLowerCase().includes(k)) || msg.length > 400;
-    };
-
-    console.log(`🧠 [Alex IO] Procesando mensaje para ${userId}.`);
-
-    // --- FLUJO OFICIAL DE DECISIÓN (v5.1) ---
+    // --- FLUJO OFICIAL DE RUTEIO (Gemini -> OpenAI -> DeepSeek -> Brain) ---
 
     // FASE 1: GEMINI FLASH (GRATIS)
     if (!responseText && GENAI_API_KEY) {
-        const tryGemini = async (isRetry = false) => {
-            try {
-                console.log(`🤖 [Alex IO] Intentando Gemini Flash 1.5${isRetry ? ' (RETRY)' : ''}...`);
-                const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-                const model = genAI.getGenerativeModel({
-                    model: "gemini-1.5-flash",
-                    systemInstruction: systemPrompt
-                });
+        try {
+            console.log(`🤖 [ALEX IO] Intentando Gemini Flash...`);
+            const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
+            const model = genAI.getGenerativeModel({
+                model: "gemini-1.5-flash",
+                systemInstruction: systemPrompt + memoryContext
+            });
 
+            await withTimeout(async () => {
                 let chatHistory = [];
                 for (const msg of combinedHistory) {
                     const role = msg.role === 'user' ? 'user' : 'model';
@@ -96,111 +156,100 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                     generationConfig: { temperature, maxOutputTokens: maxTokens }
                 });
 
-                const result = await chat.sendMessage(userMessage);
+                const result = await chat.sendMessage(normalizedUserMsg);
                 responseText = result.response.text();
-                usageSource = 'gemini-flash';
-                return true;
-            } catch (error) {
-                const msg = error.message || "";
-                console.error(`❌ [Alex IO] Gemini falló: ${msg}`);
-                if (msg.includes("expired") || msg.includes("key")) {
-                    addEventLog(`⚠️ Gemini: API Key Expirada o Inválida`, 'SISTEMA');
-                }
-                return false;
-            }
-        };
+            }, GEMINI_TIMEOUT_MS, "Gemini");
 
-        if (!(await tryGemini())) {
-            retryCount++;
-            if (!(await tryGemini(true))) {
-                fallbackUsed = true;
-            }
-        }
-    }
-
-    // FASE 2: DEEPSEEK (LOW COST)
-    if (!responseText && DEEPSEEK_API_KEY) {
-        try {
-            console.log("🔄 [Alex IO] Fallback a DeepSeek...");
-            const res = await axios.post('https://api.deepseek.com/chat/completions', {
-                model: "deepseek-chat",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body || h.text })),
-                    { role: "user", content: userMessage }
-                ],
-                temperature,
-                max_tokens: maxTokens
-            }, {
-                headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-                timeout: 15000
-            });
-            responseText = res.data.choices[0].message.content;
-            usageSource = 'deepseek';
-        } catch (dsError) {
-            console.error("❌ [Alex IO] DeepSeek falló:", dsError.message);
-            if (dsError.response && dsError.response.status === 402) {
-                addEventLog(`⚠️ DeepSeek: Sin saldo (Error 402)`, 'SISTEMA');
-            }
+            usageSource = 'gemini-flash';
+        } catch (error) {
+            console.error(`❌ Gemini falló/timeout: ${error.message}`);
             fallbackUsed = true;
         }
     }
 
-    // FASE 3: ALEX-BRAIN (PRO - SOLO TÉCNICO)
-    if (!responseText && BRAIN_URL && isTechnicalQuery(userMessage)) {
-        try {
-            console.log(`🧠 [Alex IO] Escalando a Alex-Brain PRO...`);
-            const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
-                userId: userId,
-                message: userMessage
-            }, {
-                headers: { 'x-api-key': BRAIN_KEY },
-                timeout: 20000
-            });
-            responseText = brainRes.data.response;
-            usageSource = 'alex-brain';
-        } catch (brainError) {
-            console.error(`❌ [Alex IO] Alex-Brain PRO falló.`);
-            fallbackUsed = true;
-        }
-    }
-
-    // FASE 4: OPENAI (PAGO - GARANTÍA FINAL)
+    // FASE 2: OPENAI GPT-4o-mini (PAGO/FALLBACK RÁPIDO)
     if (!responseText && OPENAI_API_KEY) {
         try {
-            console.log("🔄 [Alex IO] Último Recurso: OpenAI GPT-4o-mini...");
+            console.log("🔄 [ALEX IO] Fallback a OpenAI (gpt-4o-mini)...");
             const res = await axios.post('https://api.openai.com/v1/chat/completions', {
                 model: "gpt-4o-mini",
                 messages: [
-                    { role: "system", content: systemPrompt },
-                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || h.body || h.text || "" })),
-                    { role: "user", content: userMessage }
+                    { role: "system", content: systemPrompt + memoryContext },
+                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content || h.body || h.text || "") })),
+                    { role: "user", content: normalizedUserMsg }
                 ],
                 temperature,
                 max_tokens: maxTokens
             }, {
                 headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-                timeout: 25000
+                timeout: OPENAI_TIMEOUT_MS
             });
             responseText = res.data.choices[0].message.content;
             usageSource = 'openai-mini';
         } catch (oaError) {
-            console.error("❌ [Alex IO] Todos los motores fallaron.");
+            console.error("❌ OpenAI falló:", oaError.message);
+            fallbackUsed = true;
         }
     }
 
-    const finalResponse = responseText || "Alex IO está procesando tu solicitud, dame un momento.";
+    // FASE 3: DEEPSEEK (LOW COST)
+    if (!responseText && DEEPSEEK_API_KEY) {
+        try {
+            console.log("🔄 [ALEX IO] Fallback a DeepSeek...");
+            const res = await axios.post('https://api.deepseek.com/chat/completions', {
+                model: "deepseek-chat",
+                messages: [
+                    { role: "system", content: systemPrompt + memoryContext },
+                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content || h.body || h.text || "") })),
+                    { role: "user", content: normalizedUserMsg }
+                ],
+                temperature,
+                max_tokens: maxTokens
+            }, {
+                headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+                timeout: DEEPSEEK_TIMEOUT_MS
+            });
+            responseText = res.data.choices[0].message.content;
+            usageSource = 'deepseek';
+        } catch (dsError) {
+            console.error("❌ DeepSeek falló:", dsError.message);
+            fallbackUsed = true;
+        }
+    }
+
+    // FASE 4: ALEX-BRAIN (PRO)
+    if (!responseText && BRAIN_URL) {
+        try {
+            console.log(`🧠 [ALEX IO] Escalando a Alex-Brain PRO...`);
+            const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
+                userId: userId,
+                message: normalizedUserMsg,
+                context: memoryContext
+            }, {
+                headers: { 'x-api-key': BRAIN_KEY },
+                timeout: BRAIN_TIMEOUT_MS
+            });
+            responseText = brainRes.data.response;
+            usageSource = 'alex-brain';
+        } catch (brainError) {
+            console.error(`❌ Alex-Brain PRO falló.`);
+            fallbackUsed = true;
+        }
+    }
+
+    // NORMALIZACIÓN DE BRANDING FINAL
+    let finalResponse = (responseText || "ALEX está optimizando su conexión...").replace(/Alexandra/g, 'ALEX');
+
     outputTokens = estimateTokens(finalResponse);
     const responseTime = Date.now() - startTime;
 
-    // Cálculo de Costo (v5.1)
     const pricing = PRICES[usageSource] || { input: 0, output: 0 };
     const cost = (inputTokens * pricing.input) + (outputTokens * pricing.output);
 
     // Update Memory
     if (responseText) {
         const newHistory = [...combinedHistory];
-        newHistory.push({ role: 'user', content: userMessage });
+        newHistory.push({ role: 'user', content: normalizedUserMsg });
         newHistory.push({ role: 'assistant', content: finalResponse });
         conversationMemory.set(userId, newHistory.slice(-10));
     }
@@ -224,9 +273,27 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
     };
 }
 
-function cleanTextForTTS(text) {
-    if (!text) return "";
-    return text.replace(/[*_~`#]/g, '').replace(/!\[.*?\]\(.*?\)/g, '').replace(/\[.*?\]\(.*?\)/g, '').replace(/\{.*?\}/g, '').replace(/\s+/g, ' ').trim();
+function getProviderConfigStatus() {
+    return {
+        order: ["gemini-flash", "openai-mini", "deepseek", "alex-brain"],
+        configured: {
+            gemini: !!GENAI_API_KEY,
+            openai: !!OPENAI_API_KEY,
+            deepseek: !!DEEPSEEK_API_KEY,
+            alexBrain: !!BRAIN_URL
+        },
+        timeouts: {
+            gemini: GEMINI_TIMEOUT_MS,
+            openai: OPENAI_TIMEOUT_MS,
+            deepseek: DEEPSEEK_TIMEOUT_MS,
+            alexBrain: BRAIN_TIMEOUT_MS
+        }
+    };
 }
 
-module.exports = { generateResponse, cleanTextForTTS, detectPersonalityFromMessage };
+function cleanTextForTTS(text) {
+    if (!text) return "";
+    return text.replace(/[*_~`#]/g, '').replace(/Alex/g, 'Alex').replace(/Alexandra/g, 'Alex').trim();
+}
+
+module.exports = { generateResponse, cleanTextForTTS, detectPersonalityFromMessage, getProviderConfigStatus };

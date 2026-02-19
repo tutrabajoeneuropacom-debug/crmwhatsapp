@@ -18,7 +18,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const { PassThrough } = require('stream');
 // --- SERVICES ---
 const whatsappCloudAPI = require('./services/whatsappCloudAPI');
-const { generateResponse, cleanTextForTTS, detectPersonalityFromMessage } = require('./services/aiRouter');
+const { generateResponse, cleanTextForTTS, detectPersonalityFromMessage, getProviderConfigStatus } = require('./services/aiRouter');
 const useSupabaseAuthState = require('./services/supabaseAuthState');
 
 // --- Robust Key Cleaning ---
@@ -51,7 +51,7 @@ app.get(['/qr-final', '/qr-final**'], (req, res) => {
     if (global.qrCodeUrl) {
         res.send(`
             <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 100vh; font-family: sans-serif; text-align: center; padding: 40px 20px; box-sizing: border-box;">
-                <h1 style="color: #4ade80; margin-bottom: 30px;">📱 Escanea para conectar a Alexandra</h1>
+                <h1 style="color: #4ade80; margin-bottom: 30px;">📱 Escanea para conectar a Alex</h1>
                 <div style="background: white; padding: 20px; border-radius: 20px; box-shadow: 0 0 50px rgba(74, 222, 128, 0.2); margin-bottom: 20px;">
                     <img src="${global.qrCodeUrl}" style="width: 300px; height: 300px; display: block;" />
                 </div>
@@ -77,7 +77,7 @@ app.get(['/qr-final', '/qr-final**'], (req, res) => {
     } else {
         res.send(`
             <div style="background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; text-align: center; padding: 40px 20px;">
-                <h1 style="color: #64748b; margin-bottom: 5px;">⏳ Alexandra está despertando...</h1>
+                <h1 style="color: #64748b; margin-bottom: 5px;">⏳ Alex está despertando...</h1>
                 <p style="color: #475569; margin-bottom: 20px;">(Baileys está negociando con la red de WhatsApp)</p>
                 <div style="width: 50px; height: 50px; border: 5px solid #1e293b; border-top-color: #4ade80; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto;"></div>
                 <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
@@ -167,6 +167,10 @@ app.get('/api/whatsapp/cloud/status', (req, res) => {
     res.json(whatsappCloudAPI.getStatus());
 });
 
+app.get('/api/providers/status', (req, res) => {
+    res.json(getProviderConfigStatus());
+});
+
 // --- GLOBAL STATE ---
 let sock;
 let isConnecting = false;
@@ -199,7 +203,7 @@ const getDynamicPrompt = (userData, recentHistory) => {
     const phase = userData.journeyPhase || 0;
 
     // Base Identity
-    let baseSystem = `Eres **Alexandra v2.0**, la Arquitecta de Carreras de 'Puentes Globales'. 🌍
+    let baseSystem = `Eres **Alex v2.0**, el Arquitecto de Carreras de 'Puentes Globales'. 🌍
     
     **TU IDENTIDAD COGNITIVA:**
     - No eres un chatbot. Eres una **Estratega Senior**.
@@ -287,7 +291,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         const cmd = userText.toLowerCase().trim();
 
         if (cmd === '!ayuda' || cmd === '!help' || cmd === '!personalidades') {
-            let list = "🎭 *Menú de Personalidades Alexandra v2.0*\n\n";
+            let list = "🎭 *Menú de Personalidades Alex v2.0*\n\n";
             Object.values(personas).forEach(p => {
                 list += `${p.emoji} *!${p.id.replace('ALEX_', '').toLowerCase()}*: ${p.role}\n`;
             });
@@ -304,7 +308,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
 
         if (cmd === '!status') {
             const up = Math.floor(process.uptime() / 60);
-            return `📊 *Estado de Alexandra v2.0*\n\n` +
+            return `📊 *Estado de Alex v2.0*\n\n` +
                 `🤖 *Personalidad:* ${personas[user.currentPersona].name}\n` +
                 `📡 *Conexión:* ${global.connectionStatus}\n` +
                 `⏱️ *Uptime:* ${up} minutos\n` +
@@ -339,7 +343,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         const detected = detectPersonalityFromMessage(userText);
         if (detected && detected !== user.currentPersona) {
             user.currentPersona = detected; // FIX: CAMBIO REAL de personalidad
-            console.log(`🎯 [ALEXANDRA] Auto-detected topic -> Personality: ${detected} for user ${userId}`);
+            console.log(`🎯 [ALEX] Auto-detected topic -> Personality: ${detected} for user ${userId}`);
         }
     }
 
@@ -348,7 +352,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         const textLC = userText.toLowerCase();
         if (textLC.includes('si') || textLC.includes('quiero') || textLC.includes('migrar') || textLC.includes('interesa')) {
             user.journeyPhase = 1; // AVANZA DE FASE (Saludado -> Interesado)
-            console.log(`📈 [ALEXANDRA] Phase Progression: 0 -> 1 for user ${userId}`);
+            console.log(`📈 [ALEX] Phase Progression: 0 -> 1 for user ${userId}`);
         }
     }
 
@@ -395,7 +399,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         return aiResult;
     } catch (e) {
         console.error('Brain Error:', e);
-        return { response: "⚠️ Alexandra está recalibrando sus sistemas... dame un momento.", source: 'error', isPaid: false };
+        return { response: "⚠️ Alex está optimizando su conexión... dame un momento.", source: 'error', isPaid: false };
     }
 }
 
@@ -429,8 +433,8 @@ async function speakAlex(id, text) {
                 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
                 const mp3 = await openai.audio.speech.create({
                     model: "tts-1",
-                    voice: "onyx",
-                    input: cleanText.substring(0, 4096)
+                    voice: process.env.TTS_VOICE || "onyx",
+                    input: cleanText.substring(0, 4096).replace(/Alexandra/g, 'ALEX')
                 });
                 voicedBuffer = Buffer.from(await mp3.arrayBuffer());
             } catch (err) {
@@ -673,12 +677,12 @@ app.post('/saas/connect', (req, res) => {
 
     // 2. If already connected, confirm it
     if (global.connectionStatus === 'READY') {
-        return res.json({ success: true, message: '✅ Alexandra Cognitive Engine is Active.' });
+        return res.json({ success: true, message: '✅ Alex Cognitive Engine is Active.' });
     }
 
     // 3. If connecting, tell them to wait
     if (global.connectionStatus === 'CONNECTING') {
-        return res.json({ success: false, error: '⏳ Alexandra está despertando... espera el QR.' });
+        return res.json({ success: false, error: '⏳ Alex está despertando... espera el QR.' });
     }
 
     // 4. Default: Start if not running

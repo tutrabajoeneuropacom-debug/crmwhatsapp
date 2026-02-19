@@ -76,15 +76,15 @@ class WhatsAppService {
 
             // CONSENSUS CONFIGURATION
             this.sock = makeWASocket({
-                logger: pino({ level: 'silent' }),
+                logger: pino({ level: 'info' }),
                 printQRInTerminal: true,
                 mobile: false,
                 auth: {
                     creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'info' })),
                 },
                 // SWITCHING SIGNATURE TO UBUNTU (Standard Baileys)
-                browser: ['Ubuntu', 'Chrome', '20.0.04'],
+                browser: ['Chrome (Linux)', 'Chrome', '110.0.0'],
                 // 2. Critical for Serverless
                 syncFullHistory: false,
                 // 3. Ninja Mode
