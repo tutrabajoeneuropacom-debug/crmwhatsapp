@@ -145,14 +145,26 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
             await withTimeout(async () => {
                 let chatHistory = [];
+                let lastRole = null;
+
+                // Gemini REQUIRES alternating roles: user -> model -> user -> model
                 for (const msg of combinedHistory) {
-                    const role = msg.role === 'user' ? 'user' : 'model';
-                    const text = String(msg.content || msg.body || msg.text || "");
-                    if (text.trim()) chatHistory.push({ role: role, parts: [{ text: text }] });
+                    const currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
+                    const text = String(msg.content || msg.body || msg.text || "").trim();
+
+                    if (text && currentRole !== lastRole) {
+                        chatHistory.push({ role: currentRole, parts: [{ text: text }] });
+                        lastRole = currentRole;
+                    }
+                }
+
+                // Ensure history starts with 'user' (Gemini requirement)
+                if (chatHistory.length > 0 && chatHistory[0].role !== 'user') {
+                    chatHistory.shift();
                 }
 
                 const chat = model.startChat({
-                    history: chatHistory.slice(-6),
+                    history: chatHistory.slice(-10), // Increased history window
                     generationConfig: { temperature, maxOutputTokens: maxTokens }
                 });
 
@@ -162,7 +174,9 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
             usageSource = 'gemini-flash';
         } catch (error) {
-            console.error(`❌ Gemini falló/timeout: ${error.message}`);
+            console.error(`❌ [ALEX AI] Gemini Flash Error: ${error.message}`);
+            // If it's a 429 or quota error, the fallback is expected. 
+            // If it's a validation error, we need to know.
             fallbackUsed = true;
         }
     }
