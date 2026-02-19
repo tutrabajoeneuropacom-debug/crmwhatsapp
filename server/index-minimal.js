@@ -343,8 +343,8 @@ async function speakAlex(id, text) {
 
         // 2. Google Fallback (if OpenAI fails or missing)
         if (!voicedBuffer) {
-            console.log("🔊 Fallback a Google TTS...");
-            const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es', slow: false });
+            console.log("🔊 Fallback a Google TTS (es-US)...");
+            const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es-US', slow: false });
             if (results && results.length > 0) {
                 // Unimos todos los fragmentos en un solo Buffer
                 voicedBuffer = Buffer.concat(results.map(item => Buffer.from(item.base64, 'base64')));

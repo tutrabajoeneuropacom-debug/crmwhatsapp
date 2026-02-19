@@ -140,7 +140,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
             const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
             const model = genAI.getGenerativeModel({
                 model: "gemini-1.5-flash",
-                systemInstruction: systemPrompt + memoryContext,
+                systemInstruction: { parts: [{ text: systemPrompt + memoryContext }] },
                 safetySettings: [
                     { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
                     { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -153,34 +153,34 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 let chatHistory = [];
                 let lastRole = null;
 
-                // Gemini REQUIRES alternating roles: user -> model -> user -> model
                 for (const msg of combinedHistory) {
                     let currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
                     const text = String(msg.content || msg.body || msg.text || "").trim();
-
                     if (text && currentRole !== lastRole) {
                         chatHistory.push({ role: currentRole, parts: [{ text: text }] });
                         lastRole = currentRole;
                     }
                 }
 
-                if (chatHistory.length > 0) {
+                // If no history, we use simple generateContent to ensure system instruction priority
+                let result;
+                if (chatHistory.length === 0) {
+                    result = await model.generateContent(normalizedUserMsg);
+                } else {
                     if (chatHistory[0].role !== 'user') chatHistory.shift();
                     if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role !== 'model') chatHistory.pop();
+
+                    const chat = model.startChat({
+                        history: chatHistory.slice(-6),
+                        generationConfig: { temperature, maxOutputTokens: maxTokens }
+                    });
+                    result = await chat.sendMessage(normalizedUserMsg);
                 }
 
-                const chat = model.startChat({
-                    history: chatHistory.slice(-8),
-                    generationConfig: { temperature, maxOutputTokens: maxTokens }
-                });
-
-                const result = await chat.sendMessage(normalizedUserMsg);
                 const text = result.response.text();
                 if (text && text.trim().length > 0) {
                     responseText = text;
                     usageSource = 'gemini-flash';
-                } else {
-                    console.warn("⚠️ [ALEX AI] Gemini returned empty response.");
                 }
             }, GEMINI_TIMEOUT_MS, "Gemini");
         } catch (error) {
