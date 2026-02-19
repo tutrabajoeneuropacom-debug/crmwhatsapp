@@ -176,7 +176,7 @@ let sock;
 let isConnecting = false;
 global.qrCodeUrl = null;
 global.connectionStatus = 'DISCONNECTED';
-global.currentPersona = 'ALEX_DEV';
+global.currentPersona = 'ALEX_MIGRATION'; // Priority: Migration
 global.eventLogs = [];
 global.usageStats = []; // v5.1: Track detailed metrics for dashboard
 
@@ -192,75 +192,11 @@ const sessionsDir = path.join(__dirname, 'auth_info_baileys');
 if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 
 // ==============================================================================
-// 🧠 ALEX v2.0 COGNITIVE ENGINE (Arquitectura Distribuida Simulada)
+// 🧠 ALEX v5.0 COGNITIVE ENGINE (Arquitectura de Migraciones)
 // ==============================================================================
 
 // 1. MOCK DATABASE (Supabase Simulator)
 const userDatabase = {};
-
-// 2. PERSONALITY ENGINE (Generador de Tono)
-const getDynamicPrompt = (userData, recentHistory) => {
-    const phase = userData.journeyPhase || 0;
-
-    // Base Identity
-    let baseSystem = `Eres **Alex v2.0**, el Arquitecto de Carreras de 'Puentes Globales'. 🌍
-    
-    **TU IDENTIDAD COGNITIVA:**
-    - No eres un chatbot. Eres una **Estratega Senior**.
-    - Tu objetivo NO es vender, es **guiar** al éxito.
-    - **Piensas antes de hablar**.
-    - No repites preguntas. Si ya tienes el dato, avanza.
-    - Voz: Femenina (Shimmer/Alloy), suave y profesional.
-
-    **TU MAPA MENTAL (ESTADO ACTUAL DEL USUARIO: FASE ${phase}):**
-    `;
-
-    // Adaptive Phase Instructions
-    switch (phase) {
-        case 0: // Exploración
-            baseSystem += `
-            - El usuario es NUEVO.
-            - Objetivo: Detectar si quiere migrar y si conoce la plataforma.
-            - Tono: Curioso y acogedor, pero profesional.
-            - Acción Clave: Llevarlo a crear su CV en la web.`;
-            break;
-        case 1: // CV Creado -> ATS
-            baseSystem += `
-            - El usuario YA tiene CV.
-            - Objetivo: Simular el análisis ATS.
-            - Tono: Analítico. "Veamos si pasas los robots".
-            - Acción Clave: Pedirle que simule el ATS o darle feedback si ya lo hizo.`;
-            break;
-        case 2: // ATS Fallido -> Psicométrico
-            baseSystem += `
-            - El usuario FALLÓ el ATS (Score bajo).
-            - Objetivo: Calmar la frustración y redirigir al Test Psicométrico.
-            - Insight: "El CV es técnico, el Test es humano. Veamos tu potencial real".`;
-            break;
-        case 3: // Test Hecho -> Cierre
-            baseSystem += `
-            - El usuario completó el circuito.
-            - Objetivo: CERRAR la consultoría humana.
-            - Argumento: "Los datos muestran que necesitas estrategia personalizada".
-            - Call to Action: Agenda aquí -> https://calendly.com/puentesglobales-iwue`;
-            break;
-        case 4: // Agendado
-            baseSystem += `
-            - Usuario ya convertido.
-            - Objetivo: Mantenimiento y tips previos a la llamada.`;
-            break;
-    }
-
-    baseSystem += `
-    \n**REGLAS DE RESPUESTA:**
-    1. Sé breve (estilo WhatsApp).
-    2. Si te hablan en inglés, cambia a **TalkMe Tutor** (Coach de Inglés).
-    3. Si el usuario te da un dato nuevo, asúmelo y avanza de fase.
-    4. Usa herramientas ("Voy a consultar tu perfil...") para sonar inteligente.
-    `;
-
-    return baseSystem;
-};
 
 // 3. COGNITIVE PROCESSOR (The Brain)
 async function processMessageAleX(userId, userText, userAudioBuffer = null) {
@@ -268,7 +204,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         userDatabase[userId] = {
             name: 'Candidato',
             chatLog: [],
-            currentPersona: 'ALEX_DEV',
+            currentPersona: 'ALEX_MIGRATION', // Always start as Migration Consultant
             lastMessageTime: 0,
             messageCount: 0
         };
@@ -290,26 +226,14 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
     if (userText && (userText.startsWith('!') || userText.startsWith('/'))) {
         const cmd = userText.toLowerCase().trim();
 
-        if (cmd === '!ayuda' || cmd === '!help' || cmd === '!personalidades') {
-            let list = "🎭 *Menú de Personalidades Alex v2.0*\n\n";
-            Object.values(personas).forEach(p => {
-                list += `${p.emoji} *!${p.id.replace('ALEX_', '').toLowerCase()}*: ${p.role}\n`;
-            });
-            list += "\n✅ *Otros comandos:*\n";
-            list += "• `!actual`: Ver personalidad activa.\n";
-            list += "• `!reset`: Borrar historial de chat.\n";
-            return list;
-        }
-
-        if (cmd === '!actual') {
-            const p = personas[user.currentPersona];
-            return `🎯 *Personalidad actual:* ${p.name} ${p.emoji}\n_${p.role}_`;
+        if (cmd === '!ayuda' || cmd === '!help') {
+            return "🌍 *ALEX: Consultoría Migratoria*\n\nSoy tu guía para relocalización técnica en Europa.\n\n✅ *Comandos:*\n• `!status`: Ver mi estado actual.\n• `!reset`: Reiniciar nuestra conversación.";
         }
 
         if (cmd === '!status') {
             const up = Math.floor(process.uptime() / 60);
-            return `📊 *Estado de Alex v2.0*\n\n` +
-                `🤖 *Personalidad:* ${personas[user.currentPersona].name}\n` +
+            return `📊 *Estado de ALEX*\n\n` +
+                `🤖 *Identidad:* Consultor Senior de Migraciones\n` +
                 `📡 *Conexión:* ${global.connectionStatus}\n` +
                 `⏱️ *Uptime:* ${up} minutos\n` +
                 `👤 *Tu histórico:* ${user.chatLog.length} mensajes`;
@@ -325,34 +249,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
 
         if (cmd === '!reset') {
             user.chatLog = [];
-            return "🧹 *Historial reiniciado.* ¿En qué puedo ayudarte desde cero?";
-        }
-
-        // Switch Personality
-        for (const [key, p] of Object.entries(personas)) {
-            const shortName = key.replace('ALEX_', '').toLowerCase();
-            if (cmd.includes(shortName)) {
-                user.currentPersona = key;
-                return `✅ *Modo ${p.name}* activado ${p.emoji}\n_${p.role}_`;
-            }
-        }
-    }
-
-    // --- HEURISTIC: AUTO-DETECT TOPIC ---
-    if (userText) {
-        const detected = detectPersonalityFromMessage(userText);
-        if (detected && detected !== user.currentPersona) {
-            user.currentPersona = detected; // FIX: CAMBIO REAL de personalidad
-            console.log(`🎯 [ALEX] Auto-detected topic -> Personality: ${detected} for user ${userId}`);
-        }
-    }
-
-    // --- HEURISTIC: PHASE PROGRESSION (MIGRATION JOURNEY) ---
-    if (user.currentPersona === 'ALEX_MIGRATION' && user.journeyPhase === 0) {
-        const textLC = userText.toLowerCase();
-        if (textLC.includes('si') || textLC.includes('quiero') || textLC.includes('migrar') || textLC.includes('interesa')) {
-            user.journeyPhase = 1; // AVANZA DE FASE (Saludado -> Interesado)
-            console.log(`📈 [ALEX] Phase Progression: 0 -> 1 for user ${userId}`);
+            return "🧹 *Historial reiniciado.* ¿En qué puedo ayudarte con tu diagnóstico migratorio?";
         }
     }
 
@@ -399,7 +296,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         return aiResult;
     } catch (e) {
         console.error('Brain Error:', e);
-        return { response: "⚠️ Alex está optimizando su conexión... dame un momento.", source: 'error', isPaid: false };
+        return { response: "⚠️ ALEX está optimizando su conexión... dame un momento.", source: 'error', isPaid: false };
     }
 }
 

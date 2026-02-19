@@ -149,7 +149,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
                 // Gemini REQUIRES alternating roles: user -> model -> user -> model
                 for (const msg of combinedHistory) {
-                    const currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
+                    let currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
                     const text = String(msg.content || msg.body || msg.text || "").trim();
 
                     if (text && currentRole !== lastRole) {
@@ -158,13 +158,24 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                     }
                 }
 
-                // Ensure history starts with 'user' (Gemini requirement)
-                if (chatHistory.length > 0 && chatHistory[0].role !== 'user') {
-                    chatHistory.shift();
+                // GEMINI RULES:
+                // 1. Must start with 'user'
+                // 2. Must end with 'model' (before calling sendMessage with a 'user' msg)
+                // 3. Must alternate
+
+                if (chatHistory.length > 0) {
+                    // Rule 1: Starts with user
+                    if (chatHistory[0].role !== 'user') {
+                        chatHistory.shift();
+                    }
+                    // Rule 2: Ends with model
+                    if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role !== 'model') {
+                        chatHistory.pop();
+                    }
                 }
 
                 const chat = model.startChat({
-                    history: chatHistory.slice(-10), // Increased history window
+                    history: chatHistory.slice(-8), // Safe window
                     generationConfig: { temperature, maxOutputTokens: maxTokens }
                 });
 

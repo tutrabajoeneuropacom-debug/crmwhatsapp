@@ -105,20 +105,11 @@ const WhatsAppConnect = () => {
             </h1>
             <p className="text-center text-slate-500 mb-8 text-sm">Control de Inteligencia y Consumo en Tiempo Real</p>
 
-            {/* PERSONA SWITCHER */}
-            <div className="flex justify-center mb-6 gap-4">
-                <button
-                    onClick={() => handlePersonaChange('ALEX_MIGRATION')}
-                    className={`px-6 py-2 rounded-xl font-bold border transition-all ${persona === 'ALEX_MIGRATION' ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-                >
-                    🌍 MIGRACIONES
-                </button>
-                <button
-                    onClick={() => handlePersonaChange('ALEX_DEV')}
-                    className={`px-6 py-2 rounded-xl font-bold border transition-all ${persona === 'ALEX_DEV' ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-                >
-                    💻 SISTEMAS
-                </button>
+            {/* IDENTITY BADGE */}
+            <div className="flex justify-center mb-6">
+                <div className="px-8 py-3 bg-emerald-600 border border-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/20 flex items-center gap-2">
+                    <span className="text-xl">🌍</span> MIGRACIONES - PERSONA ACTIVA
+                </div>
             </div>
 
             {/* MODE SELECTOR */}

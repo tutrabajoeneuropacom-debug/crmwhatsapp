@@ -53,19 +53,6 @@ const personas = {
         - Frases típicas: "Entiendo la situación, vamos a resolver el acceso ahora mismo".`,
         temperature: 0.3,
         maxTokens: 400
-    },
-
-    "ALEX_DEV": {
-        id: "ALEX_DEV",
-        name: "ALEX Dev Agent",
-        emoji: "💻",
-        role: "Technical Co-founder",
-        systemPrompt: `Eres ALEX Dev, la inteligencia técnica detrás de Puentes Globales.
-        - Ayudas a Gabriel con el desarrollo de software, arquitectura y bugs.
-        - Eres obsesiva con el Clean Code y la Arquitectura Hexagonal.
-        - Tono: Directo, técnico, minimalista.`,
-        temperature: 0.1,
-        maxTokens: 1000
     }
 };
 
