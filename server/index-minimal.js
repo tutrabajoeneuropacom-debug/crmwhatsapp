@@ -270,12 +270,14 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
         } catch (e) { console.error('Whisper fail', e); }
     }
 
-    user.chatLog.push({ role: 'user', content: processedText });
-    if (user.chatLog.length > 20) user.chatLog = user.chatLog.slice(-20);
-
     try {
         const aiResult = await generateResponse(processedText, user.currentPersona, userId, user.chatLog);
+
+        // Push both messages only if AI succeeded
+        user.chatLog.push({ role: 'user', content: processedText });
         user.chatLog.push({ role: 'assistant', content: aiResult.response });
+
+        if (user.chatLog.length > 20) user.chatLog = user.chatLog.slice(-20);
 
         // Agregar logs de uso para el dashboard (v5.1 con métricas)
         const m = aiResult.metrics;
