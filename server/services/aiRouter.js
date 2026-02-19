@@ -135,60 +135,65 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
     // FASE 1: GEMINI FLASH (GRATIS) - USANDO REST API ROBUSTA
     if (!responseText && GENAI_API_KEY) {
-        const apiVersions = ['v1', 'v1beta'];
-        const modelNames = ["gemini-1.5-flash", "gemini-1.5-flash-latest"];
+        const endpoints = [
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GENAI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GENAI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GENAI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=${GENAI_API_KEY}`
+        ];
 
-        for (const ver of apiVersions) {
+        for (const url of endpoints) {
             if (responseText) break;
-            for (const modelName of modelNames) {
-                if (responseText) break;
+            try {
+                // Preparar el historial para el formato de Gemini
+                let contents = [];
+                let lastRole = null;
 
-                try {
-                    const url = `https://generativelanguage.googleapis.com/${ver}/models/${modelName}:generateContent?key=${GENAI_API_KEY}`;
-
-                    let contents = [];
-                    let lastRole = null;
-
-                    for (const msg of combinedHistory) {
-                        let currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
-                        const text = String(msg.content || msg.body || msg.text || "").trim();
-                        if (text && currentRole !== lastRole) {
-                            contents.push({ role: currentRole, parts: [{ text: text }] });
-                            lastRole = currentRole;
-                        }
+                for (const msg of combinedHistory) {
+                    let currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
+                    const text = String(msg.content || msg.body || msg.text || "").trim();
+                    if (text && currentRole !== lastRole) {
+                        contents.push({ role: currentRole, parts: [{ text: text }] });
+                        lastRole = currentRole;
                     }
+                }
 
-                    if (contents.length > 0) {
-                        if (contents[0].role !== 'user') contents.shift();
-                        if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
+                if (contents.length > 0) {
+                    if (contents[0].role !== 'user') contents.shift();
+                    if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
+                }
+
+                contents.push({ role: 'user', parts: [{ text: normalizedUserMsg }] });
+
+                const payload = {
+                    contents: contents,
+                    system_instruction: { parts: [{ text: systemPrompt + memoryContext }] },
+                    generationConfig: { temperature, maxOutputTokens: maxTokens },
+                    safetySettings: [
+                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                    ]
+                };
+
+                const response = await axios.post(url, payload, { timeout: GEMINI_TIMEOUT_MS });
+
+                if (response.data.candidates && response.data.candidates[0].content) {
+                    const text = response.data.candidates[0].content.parts[0].text;
+                    if (text && text.trim().length > 0) {
+                        responseText = text;
+                        usageSource = 'gemini-flash';
+                        console.log(`✅ [ALEX AI] Gemini Flash exitoso con URL: ${url.split('?')[0]}`);
                     }
-
-                    contents.push({ role: 'user', parts: [{ text: normalizedUserMsg }] });
-
-                    const payload = {
-                        contents: contents,
-                        system_instruction: { parts: [{ text: systemPrompt + memoryContext }] },
-                        generationConfig: { temperature, maxOutputTokens: maxTokens },
-                        safetySettings: [
-                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-                        ]
-                    };
-
-                    const response = await axios.post(url, payload, { timeout: GEMINI_TIMEOUT_MS });
-
-                    if (response.data.candidates && response.data.candidates[0].content) {
-                        const text = response.data.candidates[0].content.parts[0].text;
-                        if (text && text.trim().length > 0) {
-                            responseText = text;
-                            usageSource = 'gemini-flash';
-                            console.log(`✅ [ALEX AI] Gemini Flash exitoso (${ver}/${modelName})`);
-                        }
-                    }
-                } catch (error) {
-                    console.warn(`⚠️ [ALEX AI] Falló Gemini (${ver}/${modelName}): ${error.response?.data?.error?.message || error.message}`);
+                }
+            } catch (error) {
+                const errorData = error.response?.data?.error || {};
+                console.warn(`⚠️ [ALEX AI] Gemini URL fallida: ${url.split('?')[0]} | Error: ${errorData.message || error.message}`);
+                // Si es un error de cuota (429), dejamos de intentar este proveedor
+                if (error.response?.status === 429) {
+                    console.error("🛑 [ALEX AI] Gemini Quota Exceeded (429).");
+                    break;
                 }
             }
         }
