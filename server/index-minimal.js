@@ -414,6 +414,7 @@ async function speakAlex(id, text) {
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || `http://localhost:${PORT}`;
 
 async function connectToWhatsApp() {
+    console.log('🚀 [ALEX] INICIANDO MOTOR V7.1...');
     if (isConnecting && global.connectionStatus === 'CONNECTING') {
         console.log('⚠️ [ALEX] Connection already in progress. Skipping duplicate call.');
         return;
