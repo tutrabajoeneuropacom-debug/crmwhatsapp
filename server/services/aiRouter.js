@@ -133,61 +133,64 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
     // --- FLUJO OFICIAL DE RUTEIO (Gemini -> OpenAI -> DeepSeek -> Brain) ---
 
-    // FASE 1: GEMINI FLASH (GRATIS) - USANDO REST API PARA MÁXIMA ESTABILIDAD
+    // FASE 1: GEMINI FLASH (GRATIS) - USANDO REST API ROBUSTA
     if (!responseText && GENAI_API_KEY) {
-        try {
-            console.log(`🤖 [ALEX IO] Llamando a Gemini Flash (REST)...`);
+        const apiVersions = ['v1', 'v1beta'];
+        const modelNames = ["gemini-1.5-flash", "gemini-1.5-flash-latest"];
 
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GENAI_API_KEY}`;
+        for (const ver of apiVersions) {
+            if (responseText) break;
+            for (const modelName of modelNames) {
+                if (responseText) break;
 
-            // Preparar el historial para el formato de Gemini
-            let contents = [];
-            let lastRole = null;
+                try {
+                    const url = `https://generativelanguage.googleapis.com/${ver}/models/${modelName}:generateContent?key=${GENAI_API_KEY}`;
 
-            for (const msg of combinedHistory) {
-                let currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
-                const text = String(msg.content || msg.body || msg.text || "").trim();
-                if (text && currentRole !== lastRole) {
-                    contents.push({ role: currentRole, parts: [{ text: text }] });
-                    lastRole = currentRole;
+                    let contents = [];
+                    let lastRole = null;
+
+                    for (const msg of combinedHistory) {
+                        let currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
+                        const text = String(msg.content || msg.body || msg.text || "").trim();
+                        if (text && currentRole !== lastRole) {
+                            contents.push({ role: currentRole, parts: [{ text: text }] });
+                            lastRole = currentRole;
+                        }
+                    }
+
+                    if (contents.length > 0) {
+                        if (contents[0].role !== 'user') contents.shift();
+                        if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
+                    }
+
+                    contents.push({ role: 'user', parts: [{ text: normalizedUserMsg }] });
+
+                    const payload = {
+                        contents: contents,
+                        system_instruction: { parts: [{ text: systemPrompt + memoryContext }] },
+                        generationConfig: { temperature, maxOutputTokens: maxTokens },
+                        safetySettings: [
+                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                        ]
+                    };
+
+                    const response = await axios.post(url, payload, { timeout: GEMINI_TIMEOUT_MS });
+
+                    if (response.data.candidates && response.data.candidates[0].content) {
+                        const text = response.data.candidates[0].content.parts[0].text;
+                        if (text && text.trim().length > 0) {
+                            responseText = text;
+                            usageSource = 'gemini-flash';
+                            console.log(`✅ [ALEX AI] Gemini Flash exitoso (${ver}/${modelName})`);
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`⚠️ [ALEX AI] Falló Gemini (${ver}/${modelName}): ${error.response?.data?.error?.message || error.message}`);
                 }
             }
-
-            // Asegurar alternancia: si el último fue usuario, Gemini fallará.
-            if (contents.length > 0) {
-                if (contents[0].role !== 'user') contents.shift();
-                if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
-            }
-
-            // Agregar el mensaje actual del usuario
-            contents.push({ role: 'user', parts: [{ text: normalizedUserMsg }] });
-
-            const payload = {
-                contents: contents,
-                system_instruction: { parts: [{ text: systemPrompt + memoryContext }] },
-                generationConfig: { temperature, maxOutputTokens: maxTokens },
-                safetySettings: [
-                    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-                ]
-            };
-
-            const response = await axios.post(url, payload, { timeout: GEMINI_TIMEOUT_MS });
-
-            if (response.data.candidates && response.data.candidates[0].content) {
-                const text = response.data.candidates[0].content.parts[0].text;
-                if (text && text.trim().length > 0) {
-                    responseText = text;
-                    usageSource = 'gemini-flash';
-                }
-            } else {
-                console.warn("⚠️ [ALEX AI] Gemini REST returned no content.");
-            }
-        } catch (error) {
-            console.error(`❌ [ALEX AI] Gemini REST Error: ${error.response?.data?.error?.message || error.message}`);
-            fallbackUsed = true;
         }
     }
 

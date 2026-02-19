@@ -255,19 +255,27 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
 
     // Handle Audio
     let processedText = userText;
-    if (userAudioBuffer && OPENAI_API_KEY) {
-        try {
-            const tempPath = path.join(__dirname, `audio_in_${Date.now()}.ogg`);
-            fs.writeFileSync(tempPath, userAudioBuffer);
-            const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-            const transcription = await openai.audio.transcriptions.create({
-                file: fs.createReadStream(tempPath),
-                model: "whisper-1", language: "es"
-            });
-            processedText = transcription.text;
-            fs.unlinkSync(tempPath);
-            console.log(`👂 (Whisper): ${processedText}`);
-        } catch (e) { console.error('Whisper fail', e); }
+    if (userAudioBuffer) {
+        if (!OPENAI_API_KEY || OPENAI_API_KEY.length < 10) {
+            console.error('❌ [ALEX] Whisper ignorado: OpenAI Key faltante o inválida.');
+            processedText = "(Audio no transcribible por falta de créditos de Whisper)";
+        } else {
+            try {
+                const tempPath = path.join(__dirname, `audio_in_${Date.now()}.ogg`);
+                fs.writeFileSync(tempPath, userAudioBuffer);
+                const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+                const transcription = await openai.audio.transcriptions.create({
+                    file: fs.createReadStream(tempPath),
+                    model: "whisper-1", language: "es"
+                });
+                processedText = transcription.text;
+                fs.unlinkSync(tempPath);
+                console.log(`👂 (Whisper): ${processedText}`);
+            } catch (e) {
+                console.error('⚠️ [ALEX] Whisper fail:', e.message);
+                processedText = "(Error al transcribir audio: posible falta de créditos)";
+            }
+        }
     }
 
     try {
@@ -326,12 +334,17 @@ async function speakAlex(id, text) {
     }
 
     try {
+        if (!sock || global.connectionStatus !== 'READY') {
+            console.error("❌ [speakAlex] Socket no está listo. Abortando voz.");
+            return;
+        }
+
         await sock.sendPresenceUpdate('recording', id);
 
         let voicedBuffer = null;
 
         // 1. Try OPENAI TTS (Onyx)
-        if (OPENAI_API_KEY) {
+        if (OPENAI_API_KEY && OPENAI_API_KEY.length > 10) {
             try {
                 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
                 const mp3 = await openai.audio.speech.create({
@@ -348,8 +361,8 @@ async function speakAlex(id, text) {
 
         // 2. Google Fallback
         if (!voicedBuffer) {
-            console.log("🔊 [speakAlex] Usando Google TTS (es-US)...");
-            const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es-US', slow: false });
+            console.log("🔊 [speakAlex] Usando Google TTS (es)...");
+            const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es', slow: false });
             if (results && results.length > 0) {
                 voicedBuffer = Buffer.concat(results.map(item => Buffer.from(item.base64, 'base64')));
                 console.log("✅ [speakAlex] Voz generada con Google.");
