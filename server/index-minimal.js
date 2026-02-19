@@ -339,11 +339,15 @@ async function speakAlex(id, text) {
             return;
         }
 
-        await sock.sendPresenceUpdate('recording', id);
+        try {
+            await sock.sendPresenceUpdate('recording', id);
+        } catch (presErr) {
+            console.warn("⚠️ No se pudo enviar presencia 'recording':", presErr.message);
+        }
 
         let voicedBuffer = null;
-
-        // 1. Try OPENAI TTS (Onyx)
+        // ... (resto del código de generación de voz)
+        // [Este bloque será reemplazado por la lógica existente para mantener la integridad]
         if (OPENAI_API_KEY && OPENAI_API_KEY.length > 10) {
             try {
                 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -359,7 +363,6 @@ async function speakAlex(id, text) {
             }
         }
 
-        // 2. Google Fallback
         if (!voicedBuffer) {
             console.log("🔊 [speakAlex] Usando Google TTS (es)...");
             const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es', slow: false });
@@ -396,9 +399,13 @@ async function speakAlex(id, text) {
             console.error("❌ [speakAlex] No se pudo generar el buffer de voz.");
         }
     } catch (e) {
-        console.error('❌ [speakAlex] Error fatal:', e);
+        console.error('❌ [speakAlex] Error fatal en generación/envío:', e.message);
     } finally {
-        await sock.sendPresenceUpdate('paused', id);
+        if (sock && global.connectionStatus === 'READY') {
+            try {
+                await sock.sendPresenceUpdate('paused', id);
+            } catch (e) { }
+        }
     }
 }
 
@@ -437,16 +444,17 @@ async function connectToWhatsApp() {
     const { state, saveCreds } = authState;
 
     // 2. BAILEYS INITIALIZATION
+    console.log('📡 [ALEX] Handshaking with WhatsApp...');
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: ['Mac OS', 'Chrome', '110.0.5481.178'],
+        browser: ['Alex Bot', 'Chrome', '121.0.0.0'],
         syncFullHistory: false,
-        connectTimeoutMs: 120000,
-        defaultQueryTimeoutMs: 120000,
-        keepAliveIntervalMs: 30000,
-        markOnlineOnConnect: true,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 25000,
+        markOnlineOnConnect: false, // Prevents early presence errors
         generateHighQualityLinkPreview: false,
         retryRequestDelayMs: 5000,
     });
