@@ -305,6 +305,7 @@ async function processMessageAleX(userId, userText, userAudioBuffer = null) {
 // 4. VOICE ENGINE (TTS - OGG/Opus Fixed for WhatsApp)
 async function speakAlex(id, text) {
     if (!text) return;
+    console.log(`🎙️ [speakAlex] Preparando voz para: "${text.substring(0, 50)}..."`);
 
     // Detect Language Mode
     const isEnglishMode = text.includes('Correction:') || text.includes('Correction 💡');
@@ -313,22 +314,25 @@ async function speakAlex(id, text) {
     let cleanText = text
         .replace(/[*_~`]/g, '') // Markdown
         .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2700}-\u{27BF}]/gu, '') // Emojis
-        .replace(/(https?:\/\/[^\s]+)/g, 'el enlace'); // Don't read URLs
+        .replace(/(https?:\/\/[^\s]+)/g, 'el enlace') // Don't read URLs
+        .replace(/⚠️/g, '') // Manual fix for common emojis
+        .trim();
 
-    if (isEnglishMode) cleanText = text.split('💡')[0].trim(); // Speak only English part
+    if (isEnglishMode) cleanText = text.split('💡')[0].trim();
 
-    if (cleanText.trim().length === 0) return;
+    if (cleanText.length === 0) {
+        console.log("⚠️ [speakAlex] Texto vacío tras limpieza. Cancelando voz.");
+        return;
+    }
 
     try {
         await sock.sendPresenceUpdate('recording', id);
 
-        // VOICE GENERATION LOOP
         let voicedBuffer = null;
 
         // 1. Try OPENAI TTS (Onyx)
         if (OPENAI_API_KEY) {
             try {
-                console.log("🎙️ Generando voz con OpenAI (Onyx)...");
                 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
                 const mp3 = await openai.audio.speech.create({
                     model: "tts-1",
@@ -336,38 +340,35 @@ async function speakAlex(id, text) {
                     input: cleanText.substring(0, 4096).replace(/Alexandra/g, 'ALEX')
                 });
                 voicedBuffer = Buffer.from(await mp3.arrayBuffer());
+                console.log("✅ [speakAlex] Voz generada con OpenAI.");
             } catch (err) {
-                console.error('⚠️ OpenAI TTS failed:', err.message);
+                console.error('⚠️ [speakAlex] OpenAI TTS failed:', err.message);
             }
         }
 
-        // 2. Google Fallback (if OpenAI fails or missing)
+        // 2. Google Fallback
         if (!voicedBuffer) {
-            console.log("🔊 Fallback a Google TTS (es-US)...");
+            console.log("🔊 [speakAlex] Usando Google TTS (es-US)...");
             const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es-US', slow: false });
             if (results && results.length > 0) {
-                // Unimos todos los fragmentos en un solo Buffer
                 voicedBuffer = Buffer.concat(results.map(item => Buffer.from(item.base64, 'base64')));
+                console.log("✅ [speakAlex] Voz generada con Google.");
             }
         }
 
         if (voicedBuffer) {
-            // 🛠️ CONVERSIÓN A OGG/OPUS (WhatsApp Compatibility)
-            console.log("🔄 Convirtiendo audio a OGG/Opus para WhatsApp...");
-
+            console.log("🔄 [speakAlex] Convirtiendo audio a OGG/Opus...");
             const inputStream = new PassThrough();
             inputStream.end(voicedBuffer);
 
             const resultBuffer = await new Promise((resolve, reject) => {
                 const chunks = [];
                 const outputStream = new PassThrough();
-
                 ffmpeg(inputStream)
                     .toFormat('ogg')
                     .audioCodec('libopus')
                     .on('error', (err) => reject(err))
                     .pipe(outputStream);
-
                 outputStream.on('data', chunk => chunks.push(chunk));
                 outputStream.on('end', () => resolve(Buffer.concat(chunks)));
             });
@@ -377,10 +378,12 @@ async function speakAlex(id, text) {
                 mimetype: 'audio/ogg; codecs=opus',
                 ptt: true
             });
-            console.log("✅ Audio enviado correctamente (OGG/Opus)");
+            console.log(`✅ [speakAlex] Audio enviado a ${id}`);
+        } else {
+            console.error("❌ [speakAlex] No se pudo generar el buffer de voz.");
         }
     } catch (e) {
-        console.error('❌ Error en el motor de voz:', e);
+        console.error('❌ [speakAlex] Error fatal:', e);
     } finally {
         await sock.sendPresenceUpdate('paused', id);
     }
