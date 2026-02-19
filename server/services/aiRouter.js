@@ -25,55 +25,68 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
 
     // 1. INTENTO GEMINI (REST) - FORMATO CEREBRO (STABLE)
     if (GENAI_API_KEY) {
-        const apiVersions = ['v1', 'v1beta'];
-        const modelNames = ["gemini-1.5-flash", "gemini-1.5-flash-latest"];
+        const configs = [
+            { ver: 'v1beta', name: 'gemini-1.5-flash' },
+            { ver: 'v1beta', name: 'gemini-1.5-flash-latest' },
+            { ver: 'v1', name: 'gemini-1.5-flash' }, // v1 doesn't always support system_instruction
+            { ver: 'v1beta', name: 'gemini-pro' }
+        ];
 
-        for (const ver of apiVersions) {
+        for (const config of configs) {
             if (responseText) break;
-            for (const modelName of modelNames) {
-                if (responseText) break;
-                try {
-                    const url = `https://generativelanguage.googleapis.com/${ver}/models/${modelName}:generateContent?key=${GENAI_API_KEY}`;
+            try {
+                const url = `https://generativelanguage.googleapis.com/${config.ver}/models/${config.name}:generateContent?key=${GENAI_API_KEY}`;
 
-                    let contents = [];
-                    let lastRole = null;
+                let contents = [];
+                let lastRole = null;
 
-                    // Format history specifically for Gemini REST
-                    for (const msg of (history || []).slice(-6)) {
-                        let role = (msg.role === 'user') ? 'user' : 'model';
-                        let text = String(msg.content || msg.text || "").trim();
-                        if (text && role !== lastRole) {
-                            contents.push({ role, parts: [{ text }] });
-                            lastRole = role;
-                        }
+                // Gemini requires user -> model alternating
+                const historySlice = (history || []).slice(-8);
+
+                for (const msg of historySlice) {
+                    let role = (msg.role === 'user') ? 'user' : 'model';
+                    let text = String(msg.content || msg.text || "").trim();
+                    if (text && role !== lastRole) {
+                        contents.push({ role, parts: [{ text }] });
+                        lastRole = role;
                     }
-
-                    if (contents.length > 0 && contents[0].role !== 'user') contents.shift();
-                    if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
-
-                    contents.push({ role: 'user', parts: [{ text: normalizedUserMsg }] });
-
-                    const payload = {
-                        contents,
-                        system_instruction: { parts: [{ text: systemPrompt }] },
-                        generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
-                        safetySettings: [
-                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-                        ]
-                    };
-
-                    const response = await axios.post(url, payload, { timeout: GEMINI_TIMEOUT });
-                    if (response.data.candidates?.[0]?.content) {
-                        responseText = response.data.candidates[0].content.parts[0].text;
-                        usageSource = 'gemini-flash';
-                        console.log(`✅ [ALEX AI] Gemini OK (${ver}/${modelName})`);
-                    }
-                } catch (err) {
-                    console.warn(`⚠️ [ALEX AI] Gemini fail (${ver}/${modelName}): ${err.response?.data?.error?.message || err.message}`);
                 }
+
+                if (contents.length > 0 && contents[0].role !== 'user') contents.shift();
+                if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
+
+                contents.push({ role: 'user', parts: [{ text: normalizedUserMsg }] });
+
+                const payload = {
+                    contents,
+                    generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
+                    safetySettings: [
+                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                    ]
+                };
+
+                // system_instruction is only for v1beta in some regions
+                if (config.ver === 'v1beta') {
+                    payload.system_instruction = { parts: [{ text: systemPrompt }] };
+                } else {
+                    // Prepend to the first message if no system_instruction support
+                    if (contents.length > 0) {
+                        contents[0].parts[0].text = `INSTRUCCIONES: ${systemPrompt}\n\nMENSAJE: ${contents[0].parts[0].text}`;
+                    }
+                }
+
+                const response = await axios.post(url, payload, { timeout: GEMINI_TIMEOUT });
+                if (response.data.candidates?.[0]?.content) {
+                    responseText = response.data.candidates[0].content.parts[0].text;
+                    usageSource = 'gemini-flash';
+                    console.log(`✅ [ALEX AI] Gemini OK (${config.ver}/${config.name})`);
+                }
+            } catch (err) {
+                const errMsg = err.response?.data?.error?.message || err.message;
+                console.warn(`⚠️ [ALEX AI] Gemini fail (${config.ver}/${config.name}): ${errMsg}`);
             }
         }
     }
