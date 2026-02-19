@@ -1,21 +1,7 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+// aiRouter.js: Logic for AI Routing and Multi-Provider Fallbacks
 const axios = require('axios');
-const { MIGRATION_OPERATIONAL_CONSTITUTION, MIGRATION_SYSTEM_PROMPT_V1 } = require('../config/migrationPrompt');
-require('dotenv').config();
-
-// --- Configuración de Precios (v5.1) ---
-const PRICES = {
-    'gemini-flash': { input: 0, output: 0 }, // FREE
-    'openai-mini': { input: 0.00000015, output: 0.0000006 }, // PAID
-    'deepseek': { input: 0.0000001, output: 0.0000002 }, // LOW COST
-    'alex-brain': { input: 0.000001, output: 0.000002 } // PRO
-};
-
-// --- Timeouts ---
-const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS) || 15000;
-const DEEPSEEK_TIMEOUT_MS = parseInt(process.env.DEEPSEEK_TIMEOUT_MS) || 15000;
-const BRAIN_TIMEOUT_MS = parseInt(process.env.BRAIN_TIMEOUT_MS) || 20000;
-const OPENAI_TIMEOUT_MS = parseInt(process.env.OPENAI_TIMEOUT_MS) || 25000;
+const { MIGRATION_SYSTEM_PROMPT_V1 } = require('../config/migrationPrompt');
+const personas = require('../config/personas');
 
 // --- Robust Key Cleaning ---
 const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g, '').replace(/["']/g, '');
@@ -23,134 +9,59 @@ const cleanKey = (k) => (k || "").trim().replace(/[\r\n\t]/g, '').replace(/\s/g,
 const GENAI_API_KEY = cleanKey(process.env.GEMINI_API_KEY);
 const OPENAI_API_KEY = cleanKey(process.env.OPENAI_API_KEY);
 const DEEPSEEK_API_KEY = cleanKey(process.env.DEEPSEEK_API_KEY);
-const BRAIN_URL = process.env.ALEX_BRAIN_URL;
-const BRAIN_KEY = process.env.ALEX_BRAIN_KEY || process.env.API_KEY;
 
-const personas = require('../config/personas');
-
-// Memoria volátil y estado estructurado
-const conversationMemory = new Map();
-const conversationState = new Map();
+// Timeouts
+const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS) || 15000;
+const OPENAI_TIMEOUT_MS = parseInt(process.env.OPENAI_TIMEOUT_MS) || 25000;
+const DEEPSEEK_TIMEOUT_MS = parseInt(process.env.DEEPSEEK_TIMEOUT_MS) || 15000;
 
 /**
- * Utilidad de Timeout
+ * Main AI Router: 
+ * Tries Gemini -> OpenAI -> DeepSeek -> Alex-Brain (Future)
  */
-async function withTimeout(promise, ms, name = "Task") {
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(`TIMEOUT: ${name} superó los ${ms}ms`)), ms);
-    });
-    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
-}
-
-/**
- * Extrae variables del usuario para el estado estructurado
- */
-function extractUserState(message, userId) {
-    if (!message) return;
-    const state = conversationState.get(userId) || { variables: {} };
-    const messageLC = message.toLowerCase();
-
-    // Mapeo simple de variables mencionadas
-    const keywords = {
-        tecnico: ['tecnico', 'programador', 'developer', 'senior', 'junior'],
-        ingles: ['ingles', 'a1', 'a2', 'b1', 'b2', 'c1', 'c2'],
-        destino: ['españa', 'alemania', 'portugal', 'italia', 'europa'],
-        motivacion: ['familia', 'crecer', 'dinero', 'seguridad', 'vivienda']
-    };
-
-    for (const [variable, keys] of Object.entries(keywords)) {
-        if (keys.some(k => messageLC.includes(k))) {
-            state.variables[variable] = keys.find(k => messageLC.includes(k));
-        }
-    }
-
-    conversationState.set(userId, state);
-}
-
-/**
- * Construye el contexto de memoria basado en el estado
- */
-function buildMemoryContext(userId) {
-    const state = conversationState.get(userId);
-    if (!state || Object.keys(state.variables).length === 0) return "";
-
-    let context = "\n--- VARIABLES DETECTADAS ---\n";
-    for (const [key, val] of Object.entries(state.variables)) {
-        context += `${key.toUpperCase()}: ${val}\n`;
-    }
-    return context;
-}
-
-/**
- * Estimación de Tokens
- */
-function estimateTokens(text) {
-    if (!text) return 0;
-    return Math.ceil(text.length / 4);
-}
-
-function detectPersonalityFromMessage(message) {
-    if (!message) return null;
-    const messageLC = message.toLowerCase();
-    for (const [key, persona] of Object.entries(personas)) {
-        if (persona.keywords && persona.keywords.some(keyword => messageLC.includes(keyword))) {
-            return key;
-        }
-    }
-    return null;
-}
-
-async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', userId = 'default', explicitHistory = []) {
-    const startTime = Date.now();
-    const normalizedUserMsg = userMessage || "";
+async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', userId = 'default', history = []) {
     let responseText = null;
     let usageSource = 'none';
-    let retryCount = 0;
     let fallbackUsed = false;
-    let inputTokens = estimateTokens(normalizedUserMsg);
-    let outputTokens = 0;
 
-    // 1. SELECT PERSONA & GOVERNANCE
+    // 1. Get Persona Profile
     const currentPersona = personas[personaKey] || personas['ALEX_MIGRATION'];
-    let systemPrompt = `RECUERDA: Eres ALEX. Tu identidad es fija. ` + currentPersona.systemPrompt;
-
-    if (personaKey === 'ALEX_MIGRATION') {
-        systemPrompt = MIGRATION_SYSTEM_PROMPT_V1 + "\n\n" + MIGRATION_OPERATIONAL_CONSTITUTION;
-    }
-
-    // 2. MEMORY & CONTEXT
-    extractUserState(normalizedUserMsg, userId);
-    const memoryContext = buildMemoryContext(userId);
-
-    const previousChat = conversationMemory.get(userId) || [];
-    const combinedHistory = [...previousChat, ...explicitHistory].slice(-10);
+    let systemPrompt = personaKey === 'ALEX_MIGRATION' ? MIGRATION_SYSTEM_PROMPT_V1 : currentPersona.systemPrompt;
 
     const temperature = currentPersona.temperature || 0.7;
     const maxTokens = currentPersona.maxTokens || 500;
+    const normalizedUserMsg = String(userMessage || "").trim();
+
+    // Memory Context (Simplified for WhatsApp)
+    const memoryContext = `\n[USUARIO_ID: ${userId}]`;
+
+    // History Pre-processing
+    const combinedHistory = (history || []).map(h => ({
+        role: h.role === 'user' ? 'user' : 'model',
+        parts: [{ text: String(h.content || h.body || h.text || "").trim() }]
+    })).filter(h => h.parts[0].text.length > 0);
 
     console.log(`🧠 [ALEX IO] Procesando para ${userId} usando ${personaKey}.`);
 
-    // --- FLUJO OFICIAL DE RUTEIO (Gemini -> OpenAI -> DeepSeek -> Brain) ---
-
     // FASE 1: GEMINI FLASH (GRATIS) - USANDO REST API ROBUSTA
     if (!responseText && GENAI_API_KEY) {
+        console.log(`🔑 [ALEX AI] Validando Key (Comienza con: ${GENAI_API_KEY.substring(0, 5)}...)`);
         const endpoints = [
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GENAI_API_KEY}`,
             `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GENAI_API_KEY}`,
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GENAI_API_KEY}`,
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=${GENAI_API_KEY}`
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GENAI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GENAI_API_KEY}`
         ];
 
         for (const url of endpoints) {
             if (responseText) break;
             try {
-                // Preparar el historial para el formato de Gemini
                 let contents = [];
                 let lastRole = null;
 
-                for (const msg of combinedHistory) {
-                    let currentRole = (msg.role === 'user' || msg.role === 'model') ? msg.role : (msg.role === 'assistant' ? 'model' : 'user');
+                // Gemini requires user -> model alternating
+                for (const msg of (history || []).slice(-8)) {
+                    let currentRole = (msg.role === 'user' || msg.role === 'model' || msg.role === 'assistant') ? (msg.role === 'assistant' ? 'model' : msg.role) : 'user';
                     const text = String(msg.content || msg.body || msg.text || "").trim();
                     if (text && currentRole !== lastRole) {
                         contents.push({ role: currentRole, parts: [{ text: text }] });
@@ -158,56 +69,41 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                     }
                 }
 
-                if (contents.length > 0) {
-                    if (contents[0].role !== 'user') contents.shift();
-                    if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
-                }
+                if (contents.length > 0 && contents[0].role !== 'user') contents.shift();
+                if (contents.length > 0 && contents[contents.length - 1].role !== 'model') contents.pop();
 
                 contents.push({ role: 'user', parts: [{ text: normalizedUserMsg }] });
 
                 const payload = {
                     contents: contents,
                     system_instruction: { parts: [{ text: systemPrompt + memoryContext }] },
-                    generationConfig: { temperature, maxOutputTokens: maxTokens },
-                    safetySettings: [
-                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-                    ]
+                    generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
                 };
 
                 const response = await axios.post(url, payload, { timeout: GEMINI_TIMEOUT_MS });
 
                 if (response.data.candidates && response.data.candidates[0].content) {
-                    const text = response.data.candidates[0].content.parts[0].text;
-                    if (text && text.trim().length > 0) {
-                        responseText = text;
-                        usageSource = 'gemini-flash';
-                        console.log(`✅ [ALEX AI] Gemini Flash exitoso con URL: ${url.split('?')[0]}`);
-                    }
+                    responseText = response.data.candidates[0].content.parts[0].text;
+                    usageSource = 'gemini-flash';
+                    console.log(`✅ [ALEX AI] Exitazo con Gemini via ${url.includes('v1beta') ? 'v1beta' : 'v1'}`);
                 }
             } catch (error) {
                 const errorData = error.response?.data?.error || {};
-                console.warn(`⚠️ [ALEX AI] Gemini URL fallida: ${url.split('?')[0]} | Error: ${errorData.message || error.message}`);
-                // Si es un error de cuota (429), dejamos de intentar este proveedor
-                if (error.response?.status === 429) {
-                    console.error("🛑 [ALEX AI] Gemini Quota Exceeded (429).");
-                    break;
-                }
+                console.warn(`⚠️ [ALEX AI] Gemini URL fallida: ${url.split('models/')[1].split(':')[0]} | ${errorData.message || error.message}`);
+                if (error.response?.status === 429) break;
             }
         }
     }
 
-    // FASE 2: OPENAI GPT-4o-mini (PAGO/FALLBACK RÁPIDO)
+    // FASE 2: OPENAI GPT-4o-mini (FALLBACK)
     if (!responseText && OPENAI_API_KEY) {
         try {
-            console.log("🔄 [ALEX IO] Fallback a OpenAI (gpt-4o-mini)...");
+            console.log("🔄 [ALEX IO] Fallback a OpenAI...");
             const res = await axios.post('https://api.openai.com/v1/chat/completions', {
                 model: "gpt-4o-mini",
                 messages: [
                     { role: "system", content: systemPrompt + memoryContext },
-                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content || h.body || h.text || "") })),
+                    ...(history || []).slice(-10).map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content || h.body || h.text || "") })),
                     { role: "user", content: normalizedUserMsg }
                 ],
                 temperature,
@@ -224,7 +120,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
         }
     }
 
-    // FASE 3: DEEPSEEK (LOW COST)
+    // FASE 3: DEEPSEEK (FALLBACK)
     if (!responseText && DEEPSEEK_API_KEY) {
         try {
             console.log("🔄 [ALEX IO] Fallback a DeepSeek...");
@@ -232,7 +128,7 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
                 model: "deepseek-chat",
                 messages: [
                     { role: "system", content: systemPrompt + memoryContext },
-                    ...combinedHistory.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content || h.body || h.text || "") })),
+                    ...(history || []).slice(-10).map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content || h.body || h.text || "") })),
                     { role: "user", content: normalizedUserMsg }
                 ],
                 temperature,
@@ -249,127 +145,25 @@ async function generateResponse(userMessage, personaKey = 'ALEX_MIGRATION', user
         }
     }
 
-    // FASE 4: ALEX-BRAIN (PRO)
-    if (!responseText && BRAIN_URL) {
-        try {
-            console.log(`🧠 [ALEX IO] Escalando a Alex-Brain PRO...`);
-            const brainRes = await axios.post(`${BRAIN_URL}/brain/chat`, {
-                userId: userId,
-                message: normalizedUserMsg,
-                context: memoryContext
-            }, {
-                headers: { 'x-api-key': BRAIN_KEY },
-                timeout: BRAIN_TIMEOUT_MS
-            });
-            responseText = brainRes.data.response;
-            usageSource = 'alex-brain';
-        } catch (brainError) {
-            console.error(`❌ Alex-Brain PRO falló.`);
-            fallbackUsed = true;
-        }
-    }
+    // FINAL EMERGENCY FALLBACK
+    let finalResponse = (responseText || "Hola, soy ALEX. Mi cerebro principal está en mantenimiento, pero puedo ayudarte con tu diagnóstico. ¿Podrías decirme cuántos años de experiencia tienes?").replace(/Alexandra/g, 'ALEX');
 
-    // NORMALIZACIÓN DE BRANDING FINAL
-    let finalResponse = (responseText || "ALEX está optimizando su conexión...").replace(/Alexandra/g, 'ALEX');
-
-    outputTokens = estimateTokens(finalResponse);
-    const responseTime = Date.now() - startTime;
-
-    const pricing = PRICES[usageSource] || { input: 0, output: 0 };
-    const cost = (inputTokens * pricing.input) + (outputTokens * pricing.output);
-
-    // Update Memory
-    if (responseText) {
-        const newHistory = [...combinedHistory];
-        newHistory.push({ role: 'user', content: normalizedUserMsg });
-        newHistory.push({ role: 'assistant', content: finalResponse });
-        conversationMemory.set(userId, newHistory.slice(-10));
-    }
-
-    let tierLabel = '🍃 GRATIS';
-    if (usageSource === 'deepseek') tierLabel = '🍃 LOW COST';
-    if (usageSource === 'openai-mini') tierLabel = '💸 PAGO';
-    if (usageSource === 'alex-brain') tierLabel = '🚀 PRO';
+    // Stats for Dashboard
+    const metrics = {
+        tokens: { total: 0 },
+        cost: 0,
+        responseTime: 0
+    };
 
     return {
         response: finalResponse,
         source: usageSource,
-        tier: tierLabel,
-        metrics: {
-            tokens: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
-            cost: cost.toFixed(6),
-            responseTime: responseTime,
-            retryCount: retryCount,
-            fallbackUsed: fallbackUsed
-        }
+        tier: 'free/fallback',
+        metrics,
+        fallback: fallbackUsed
     };
-}
-
-function getProviderConfigStatus() {
-    return {
-        order: ["gemini-flash", "openai-mini", "deepseek", "alex-brain"],
-        configured: {
-            gemini: !!GENAI_API_KEY,
-            openai: !!OPENAI_API_KEY,
-            deepseek: !!DEEPSEEK_API_KEY,
-            alexBrain: !!BRAIN_URL
-        },
-        timeouts: {
-            gemini: GEMINI_TIMEOUT_MS,
-            openai: OPENAI_TIMEOUT_MS,
-            deepseek: DEEPSEEK_TIMEOUT_MS,
-            alexBrain: BRAIN_TIMEOUT_MS
-        }
-    };
-}
-
-async function generateAudio(text) {
-    if (!text) return null;
-    const voice = process.env.TTS_VOICE || "onyx";
-
-    // 1. Google Fallback (Free/Stable - User Priority)
-    try {
-        const googleTTS = require('google-tts-api');
-        const url = googleTTS.getAudioUrl(text, { lang: 'es', host: 'https://translate.google.com' });
-        const audioRes = await axios.get(url, { responseType: 'arraybuffer' });
-        if (audioRes.data) {
-            console.log("🔊 Usando Voz de Google (Gratis)...");
-            return Buffer.from(audioRes.data).toString('base64');
-        }
-    } catch (e) {
-        console.warn(`⚠️ [aiRouter] Google TTS failed, following to OpenAI...`);
-    }
-
-    // 2. OpenAI TTS (High Quality - Fallback)
-    if (OPENAI_API_KEY) {
-        try {
-            console.log("🎙️ Usando Voz de OpenAI (Onyx/Premiun)...");
-            const response = await axios({
-                method: 'post',
-                url: 'https://api.openai.com/v1/audio/speech',
-                data: { model: "tts-1", input: text, voice: voice },
-                headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-                responseType: 'arraybuffer',
-                timeout: 15000
-            });
-            return Buffer.from(response.data).toString('base64');
-        } catch (e) {
-            console.warn(`⚠️ [aiRouter] OpenAI TTS failed: ${e.message}`);
-        }
-    }
-
-    return null;
-}
-
-function cleanTextForTTS(text) {
-    if (!text) return "";
-    return text.replace(/[*_~`#]/g, '').replace(/Alex/g, 'Alex').replace(/Alexandra/g, 'Alex').trim();
 }
 
 module.exports = {
-    generateResponse,
-    generateAudio,
-    cleanTextForTTS,
-    detectPersonalityFromMessage,
-    getProviderConfigStatus
+    generateResponse
 };
