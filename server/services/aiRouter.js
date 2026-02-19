@@ -291,9 +291,48 @@ function getProviderConfigStatus() {
     };
 }
 
+async function generateAudio(text) {
+    if (!text) return null;
+    const voice = process.env.TTS_VOICE || "onyx";
+
+    // 1. OpenAI TTS (High Quality)
+    if (OPENAI_API_KEY) {
+        try {
+            const response = await axios({
+                method: 'post',
+                url: 'https://api.openai.com/v1/audio/speech',
+                data: { model: "tts-1", input: text, voice: voice },
+                headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+                responseType: 'arraybuffer',
+                timeout: 15000
+            });
+            return Buffer.from(response.data).toString('base64');
+        } catch (e) {
+            console.warn(`⚠️ [aiRouter] OpenAI TTS failed: ${e.message}`);
+        }
+    }
+
+    // 2. Fallback to Google Translate
+    try {
+        const googleTTS = require('google-tts-api');
+        const url = googleTTS.getAudioUrl(text, { lang: 'es', host: 'https://translate.google.com' });
+        const audioRes = await axios.get(url, { responseType: 'arraybuffer' });
+        return Buffer.from(audioRes.data).toString('base64');
+    } catch (e) {
+        console.error(`❌ [aiRouter] All TTS providers failed.`);
+    }
+    return null;
+}
+
 function cleanTextForTTS(text) {
     if (!text) return "";
     return text.replace(/[*_~`#]/g, '').replace(/Alex/g, 'Alex').replace(/Alexandra/g, 'Alex').trim();
 }
 
-module.exports = { generateResponse, cleanTextForTTS, detectPersonalityFromMessage, getProviderConfigStatus };
+module.exports = {
+    generateResponse,
+    generateAudio,
+    cleanTextForTTS,
+    detectPersonalityFromMessage,
+    getProviderConfigStatus
+};
