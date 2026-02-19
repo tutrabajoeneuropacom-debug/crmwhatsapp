@@ -346,8 +346,7 @@ async function speakAlex(id, text) {
         }
 
         let voicedBuffer = null;
-        // ... (resto del código de generación de voz)
-        // [Este bloque será reemplazado por la lógica existente para mantener la integridad]
+        // 1. Try OPENAI TTS (Premium Voice Onyx)
         if (OPENAI_API_KEY && OPENAI_API_KEY.length > 10) {
             try {
                 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -357,19 +356,16 @@ async function speakAlex(id, text) {
                     input: cleanText.substring(0, 4096).replace(/Alexandra/g, 'ALEX')
                 });
                 voicedBuffer = Buffer.from(await mp3.arrayBuffer());
-                console.log("✅ [speakAlex] Voz generada con OpenAI.");
+                console.log("✅ [speakAlex] Voz premium generada con OpenAI.");
             } catch (err) {
                 console.error('⚠️ [speakAlex] OpenAI TTS failed:', err.message);
             }
         }
 
+        // 2. Google Fallback - DISABLED TO AVOID FEMALE VOICE
         if (!voicedBuffer) {
-            console.log("🔊 [speakAlex] Usando Google TTS (es)...");
-            const results = await googleTTS.getAllAudioBase64(cleanText, { lang: 'es', slow: false });
-            if (results && results.length > 0) {
-                voicedBuffer = Buffer.concat(results.map(item => Buffer.from(item.base64, 'base64')));
-                console.log("✅ [speakAlex] Voz generada con Google.");
-            }
+            console.log("🔇 [speakAlex] OpenAI no disponible. Evitando voz de mujer (Google). Respondiendo solo por texto.");
+            return; // Exit speakAlex without sending audio
         }
 
         if (voicedBuffer) {
